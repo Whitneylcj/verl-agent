@@ -281,28 +281,38 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
 
     def step(self, text_actions: List[str]):
         actions, valids = self.projection_f(text_actions)
+        previous_text_obs = [value.copy() if hasattr(value, "copy") else value for value in self.pre_text_obs]
 
         next_obs, rewards, dones, infos = self.envs.step(actions)
-
-        for i, info in enumerate(infos):
-            info['is_action_valid'] = to_numpy(valids[i])
 
         self.memory.store({'text_obs': self.pre_text_obs, 'action': [self.ACTION_LOOKUP[act] for act in actions]})
         if self.is_multi_modal:
             next_obs = np.array(next_obs, next_obs[0].dtype)
-            self.pre_text_obs = self.envs.render(mode='tiny_rgb_array')
+            next_text_obs = self.envs.render(mode='tiny_rgb_array')
+            self.pre_text_obs = next_text_obs
             next_observations = {
                 'text': self.build_text_obs(infos),  
                 'image': next_obs,
-                'anchor': next_obs 
+                'anchor': next_obs
             }
         else:
+            next_text_obs = next_obs
             self.pre_text_obs = next_obs
             next_observations = {
                 'text': self.build_text_obs(infos, next_obs),  
-                'image': None, 
+                'image': None,
                 'anchor': next_obs 
             }
+
+        for i, info in enumerate(infos):
+            syntax_valid = bool(valids[i])
+            execution_valid = not np.array_equal(
+                np.asarray(previous_text_obs[i]),
+                np.asarray(next_text_obs[i]),
+            )
+            info['is_action_syntax_valid'] = to_numpy(syntax_valid)
+            info['is_action_execution_valid'] = to_numpy(execution_valid)
+            info['is_action_valid'] = to_numpy(syntax_valid and execution_valid)
 
         rewards = to_numpy(rewards)
         dones = to_numpy(dones)
