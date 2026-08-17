@@ -11,6 +11,7 @@ exact_mode=${EXACT_MODE:-graph}
 seed=${SEED:-0}
 data_root=${VERL_AGENT_DATA_ROOT:-/root/autodl-tmp/data/verl-agent}
 output_root=${VERL_AGENT_OUTPUT_ROOT:-/root/autodl-tmp/outputs/verl-agent}
+shared_data_root=${VERL_AGENT_SHARED_DATA_ROOT:-/root/autodl-tmp/data}
 train_size=${TRAIN_SIZE:-4}
 validation_size=${VALIDATION_SIZE:-16}
 group_size=${GROUP_SIZE:-4}
@@ -123,6 +124,11 @@ common_overrides=(
 )
 
 export VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-XFORMERS}
+export ALFWORLD_DATA=${ALFWORLD_DATA:-${shared_data_root}/alfworld}
+export APPWORLD_ROOT=${APPWORLD_ROOT:-${shared_data_root}/appworld}
+export APPWORLD_PORT_FILE=${APPWORLD_PORT_FILE:-/root/autodl-tmp/config/appworld_ports.ports}
+export WEBSHOP_DATA_ROOT=${WEBSHOP_DATA_ROOT:-${shared_data_root}/webshop/data}
+export WEBSHOP_SEARCH_ROOT=${WEBSHOP_SEARCH_ROOT:-${shared_data_root}/webshop/search_engine}
 
 if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then
   python3 -m verl.trainer.main_ppo "${common_overrides[@]}" --cfg job "$@"

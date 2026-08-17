@@ -26,6 +26,7 @@ def load_available_ports(port_file="appworld_ports.ports"):
     """
     Load available port list from file
     """
+    port_file = os.environ.get("APPWORLD_PORT_FILE", port_file)
     if not os.path.exists(port_file):
         raise FileNotFoundError(f"Port file {port_file} does not exist. Please run the service startup script first.")
     

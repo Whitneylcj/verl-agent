@@ -1,27 +1,19 @@
 """
 """
-import os
-import re
 import json
+import os
 import random
-from collections import defaultdict
+import re
 from ast import literal_eval
+from collections import defaultdict
 from decimal import Decimal
 
-import cleantext
-from tqdm import tqdm
-from rank_bm25 import BM25Okapi
 from flask import render_template_string
-from rich import print
 from pyserini.search.lucene import LuceneSearcher
+from rich import print
+from tqdm import tqdm
 
-from web_agent_site.utils import (
-    BASE_DIR,
-    DEFAULT_FILE_PATH,
-    DEFAULT_REVIEW_PATH,
-    DEFAULT_ATTR_PATH,
-    HUMAN_ATTR_PATH
-)
+from web_agent_site.utils import BASE_DIR, HUMAN_ATTR_PATH
 
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
 
@@ -203,7 +195,9 @@ def init_search_engine(num_products=None):
         indexes = 'indexes'
     else:
         raise NotImplementedError(f'num_products being {num_products} is not supported yet.')
-    search_engine = LuceneSearcher(os.path.join(BASE_DIR, f'../search_engine/{indexes}'))
+    default_search_root = os.path.join(BASE_DIR, "../search_engine")
+    search_root = os.environ.get("WEBSHOP_SEARCH_ROOT", default_search_root)
+    search_engine = LuceneSearcher(os.path.join(search_root, indexes))
     return search_engine
 
 
