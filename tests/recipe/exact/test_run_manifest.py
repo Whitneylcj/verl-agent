@@ -78,6 +78,19 @@ def test_manifest_records_tensorboard_directory(tmp_path, monkeypatch):
     assert manifest["paths"]["TENSORBOARD_DIR"] == str(tensorboard_dir)
 
 
+def test_manifest_records_vllm_attention_backend(monkeypatch):
+    monkeypatch.setenv("VLLM_ATTENTION_BACKEND", "FLASH_ATTN")
+
+    manifest = build_manifest(
+        repo_root=Path(__file__).resolve().parents[3],
+        experiment=_experiment(),
+        overrides=[],
+        include_hardware=False,
+    )
+
+    assert manifest["runtime"]["environment"] == {"VLLM_ATTENTION_BACKEND": "FLASH_ATTN"}
+
+
 def test_manifest_hashes_the_verified_toy_audit(tmp_path, monkeypatch):
     audit_path = tmp_path / "toy-audit.json"
     payload = b'{"schema_version":"exact-toy-audit/v1","status":"pass","git":{"commit":"abc"}}\n'

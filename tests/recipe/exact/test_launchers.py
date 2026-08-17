@@ -57,3 +57,8 @@ def test_prepared_data_paths_are_bound_to_requested_sizes() -> None:
     config = _preflight("sokoban", TRAIN_SIZE="2", VALIDATION_SIZE="3")
     assert "train_files: /root/autodl-tmp/data/verl-agent/train2_val3/text/train.parquet" in config
     assert "val_files: /root/autodl-tmp/data/verl-agent/train2_val3/text/test.parquet" in config
+
+
+def test_nvidia_pilot_defaults_to_flash_attention() -> None:
+    launcher = RUN_EXACT.read_text()
+    assert "VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}" in launcher

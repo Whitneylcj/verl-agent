@@ -85,6 +85,7 @@ def audit_run_fairness(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]
         "runtime.python_version": tuple(manifest.get("runtime", {}).get("python_version") for manifest in manifests),
         "runtime.packages": tuple(manifest.get("runtime", {}).get("packages") for manifest in manifests),
         "runtime.gpus": tuple(manifest.get("runtime", {}).get("gpus") for manifest in manifests),
+        "runtime.environment": tuple(manifest.get("runtime", {}).get("environment") for manifest in manifests),
         "paths": tuple(manifest.get("paths") for manifest in manifests),
     }
     for field, values in runtime_fields.items():

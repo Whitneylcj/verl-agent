@@ -151,6 +151,11 @@ def build_manifest(
             "python_version": platform.python_version(),
             "packages": _package_versions(),
             "gpus": _gpu_inventory() if include_hardware else [],
+            "environment": {
+                key: os.environ[key]
+                for key in ("VLLM_ATTENTION_BACKEND",)
+                if os.environ.get(key)
+            },
         },
         "paths": {
             key: os.environ.get(key)

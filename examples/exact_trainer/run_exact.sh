@@ -144,7 +144,11 @@ common_overrides=(
   "algorithm.exact.monitor.enabled=True"
 )
 
-export VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-XFORMERS}
+# vLLM 0.11 on the tested RTX 4090 host rejects the XFORMERS backend for its
+# paged KV cache (the cache block size is not divisible by 256).  FlashAttention
+# is installed and passed the model smoke test; callers can still override this
+# for other accelerators.
+export VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}
 export ALFWORLD_DATA=${ALFWORLD_DATA:-${shared_data_root}/alfworld}
 export APPWORLD_ROOT=${APPWORLD_ROOT:-${shared_data_root}/appworld}
 export APPWORLD_PORT_FILE=${APPWORLD_PORT_FILE:-/root/autodl-tmp/config/appworld_ports.ports}
