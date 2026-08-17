@@ -1289,7 +1289,22 @@ class RayPPOTrainer:
                         entropys = old_log_prob.batch["entropys"]
                         response_masks = batch.batch["response_mask"]
                         loss_agg_mode = self.config.actor_rollout_ref.actor.loss_agg_mode
+                        entropy_scale = 1.0
+                        if self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
+                            exact_padding = np.asarray(
+                                batch.non_tensor_batch.get("exact_padding", np.zeros(len(batch), dtype=bool)),
+                                dtype=bool,
+                            )
+                            non_padding = torch.as_tensor(
+                                ~exact_padding,
+                                dtype=response_masks.dtype,
+                                device=response_masks.device,
+                            )
+                            response_masks = response_masks * non_padding.unsqueeze(-1)
+                            trajectory_count = len(set(batch.non_tensor_batch["traj_uid"][~exact_padding]))
+                            entropy_scale = len(batch) / trajectory_count
                         entropy_loss = agg_loss(loss_mat=entropys, loss_mask=response_masks, loss_agg_mode=loss_agg_mode)
+                        entropy_loss = entropy_loss * entropy_scale
                         old_log_prob_metrics = {"actor/entropy_loss": entropy_loss.detach().item()}
                         metrics.update(old_log_prob_metrics)
                         old_log_prob.batch.pop("entropys")

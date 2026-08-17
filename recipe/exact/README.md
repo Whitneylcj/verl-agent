@@ -102,3 +102,9 @@ next batch could exceed 10,000 environment steps or 1,000,000 generated tokens.
 The underlying verl `Tracking` interface supports console, W&B, TensorBoard,
 MLflow, SwanLab, VEMLP W&B, and ClearML; the default EXACT launcher uses console
 plus TensorBoard while retaining local JSONL artifacts for lossless diagnosis.
+Poll a live or completed run without loading the model:
+
+```bash
+python -m recipe.exact.inspect_run /path/to/experiment --window 20
+python -m recipe.exact.inspect_run /path/to/experiment --show-rollouts 3
+```
