@@ -270,6 +270,9 @@ algorithm:
       min_samples: 8
       max_abs_alpha: 5.0
     monitor:
+      # Disabled in generic verl jobs; EXACT launchers enable this for both the
+      # estimator and its matched baselines.
+      enabled: False
       output_dir: outputs/exact/${trainer.experiment_name}
       residual_warning_ratio: 0.95
       rollout_sample_count: 8
@@ -301,6 +304,8 @@ trainer:
   log_val_generations: 0
   rollout_data_dir: null # directory for logging the rollout data, no dump if null
   validation_data_dir: null # directory for logging the validation data, no dump if null
+  # Optional atomic dump of the fully resolved Hydra config used by the Ray task.
+  resolved_config_path: null
   nnodes: 1
   n_gpus_per_node: 8
   save_freq: -1

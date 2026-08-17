@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd "${script_dir}/../.." && pwd)
+cd "${repo_root}"
+
 environment_name=${1:?Usage: run_exact.sh sokoban|alfworld|webshop|appworld}
 shift
 
@@ -127,7 +131,9 @@ common_overrides=(
   "trainer.default_local_dir=${run_output_dir}/checkpoints"
   "trainer.rollout_data_dir=${run_output_dir}/rollouts"
   "trainer.validation_data_dir=${run_output_dir}/validation"
+  "trainer.resolved_config_path=${run_output_dir}/resolved_config.yaml"
   "algorithm.exact.monitor.output_dir=${run_output_dir}/monitor"
+  "algorithm.exact.monitor.enabled=True"
 )
 
 export VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-XFORMERS}
@@ -154,5 +160,24 @@ if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then
     --train_data_size "${train_size}" \
     --val_data_size "${validation_size}"
 fi
+
+manifest_args=(
+  --output-dir "${run_output_dir}"
+  --repo-root "${repo_root}"
+  --name "${experiment_name}"
+  --environment "${environment_name}"
+  --algorithm "${algorithm_name}"
+  --exact-mode "${exact_mode}"
+  --model-path "${model_path}"
+  --seed "${seed}"
+  --loss-agg-mode "${loss_agg_mode}"
+)
+if [[ "${RESUME_RUN:-0}" == "1" ]]; then
+  manifest_args+=(--resume)
+fi
+for override in "${common_overrides[@]}" "${model_overrides[@]}" "$@"; do
+  manifest_args+=(--override "${override}")
+done
+python3 -m recipe.exact.run_manifest "${manifest_args[@]}"
 
 python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "${model_overrides[@]}" "$@"

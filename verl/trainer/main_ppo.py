@@ -21,9 +21,8 @@ import hydra
 import ray
 from omegaconf import OmegaConf
 
-from verl.trainer.ppo.ray_trainer import RayPPOTrainer
-from verl.trainer.ppo.reward import load_reward_manager
 from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
+from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 
 
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
@@ -63,6 +62,14 @@ class TaskRunner:
 
         pprint(OmegaConf.to_container(config, resolve=True))  # resolve=True will eval symbol values
         OmegaConf.resolve(config)
+
+        resolved_config_path = config.trainer.get("resolved_config_path", None)
+        if resolved_config_path:
+            resolved_config_path = os.path.abspath(os.path.expanduser(resolved_config_path))
+            os.makedirs(os.path.dirname(resolved_config_path), exist_ok=True)
+            temporary_config_path = resolved_config_path + ".tmp"
+            OmegaConf.save(config, temporary_config_path, resolve=True)
+            os.replace(temporary_config_path, resolved_config_path)
 
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))

@@ -1131,12 +1131,12 @@ class RayPPOTrainer:
         # load checkpoint before doing anything
         self._load_checkpoint()
 
-        exact_observer = None
-        if self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
-            from recipe.exact.monitor import ExactObserver
+        run_observer = None
+        monitor_config = self.config.algorithm.exact.monitor
+        if monitor_config.enabled:
+            from recipe.exact.monitor import AgentRunObserver
 
-            monitor_config = self.config.algorithm.exact.monitor
-            exact_observer = ExactObserver(
+            run_observer = AgentRunObserver(
                 output_dir=monitor_config.output_dir,
                 conservation_tolerance=self.config.algorithm.exact.conservation_tolerance,
                 residual_warning_ratio=monitor_config.residual_warning_ratio,
@@ -1156,8 +1156,12 @@ class RayPPOTrainer:
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
+            if run_observer is not None:
+                run_observer.observe_validation(step=self.global_steps, metrics=val_metrics)
             logger.log(data=val_metrics, step=self.global_steps)
             if self.config.trainer.get("val_only", False):
+                if run_observer is not None:
+                    run_observer.mark_completed(step=self.global_steps, metrics=val_metrics)
                 return
 
         # add tqdm
@@ -1171,7 +1175,7 @@ class RayPPOTrainer:
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-                exact_step_warnings = []
+                step_warnings = []
                 exact_traces = []
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
                 prompt_count = len(batch)
@@ -1182,8 +1186,8 @@ class RayPPOTrainer:
                         "training/cumulative_env_steps": self.cumulative_env_steps,
                         "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
                     }
-                    if exact_observer is not None:
-                        exact_observer.mark_budget_reached(
+                    if run_observer is not None:
+                        run_observer.mark_budget_reached(
                             step=self.global_steps - 1,
                             metrics=budget_metrics,
                         )
@@ -1414,14 +1418,13 @@ class RayPPOTrainer:
                                 next_alpha = self.exact_alpha_controller.advance()
                                 for bucket, alpha in next_alpha.items():
                                     metrics[f"exact/cv_alpha_next/{bucket}"] = float(alpha)
-                        if exact_observer is not None:
+                        if run_observer is not None:
                             from recipe.exact.monitor import (
                                 build_rollout_records,
                                 build_trajectory_diagnostics,
                                 summarize_trajectory_diagnostics,
                             )
 
-                            monitor_config = self.config.algorithm.exact.monitor
                             trajectory_diagnostics = build_trajectory_diagnostics(
                                 batch,
                                 exact_traces,
@@ -1438,13 +1441,21 @@ class RayPPOTrainer:
                                 redact_text=monitor_config.redact_text,
                                 max_text_chars=monitor_config.max_text_chars,
                             )
-                            exact_step_warnings = exact_observer.observe_credit(
-                                step=self.global_steps,
-                                metrics=metrics,
-                                traces=exact_traces,
-                                rollout_records=rollout_records,
-                                trajectory_diagnostics=trajectory_diagnostics,
-                            )
+                            if self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
+                                step_warnings = run_observer.observe_credit(
+                                    step=self.global_steps,
+                                    metrics=metrics,
+                                    traces=exact_traces,
+                                    rollout_records=rollout_records,
+                                    trajectory_diagnostics=trajectory_diagnostics,
+                                )
+                            else:
+                                step_warnings = run_observer.observe_rollouts(
+                                    step=self.global_steps,
+                                    metrics=metrics,
+                                    rollout_records=rollout_records,
+                                    trajectory_diagnostics=trajectory_diagnostics,
+                                )
 
                     # update critic
                     if self.use_critic:
@@ -1472,7 +1483,7 @@ class RayPPOTrainer:
                             print(batch.batch.keys())
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-                            if exact_observer is not None and self.config.algorithm.exact.monitor.redact_text:
+                            if run_observer is not None and monitor_config.redact_text:
                                 from recipe.exact.monitor import redact_rollout_text
 
                                 max_text_chars = self.config.algorithm.exact.monitor.max_text_chars
@@ -1491,6 +1502,11 @@ class RayPPOTrainer:
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
                         with _timer("testing", timing_raw):
                             val_metrics: dict = self._validate()
+                            if run_observer is not None:
+                                run_observer.observe_validation(
+                                    step=self.global_steps,
+                                    metrics=val_metrics,
+                                )
                             if is_last_step:
                                 last_val_metrics = val_metrics
                         metrics.update(val_metrics)
@@ -1535,11 +1551,11 @@ class RayPPOTrainer:
                     }
                 )
 
-                if exact_observer is not None:
-                    exact_observer.complete_step(
+                if run_observer is not None:
+                    run_observer.complete_step(
                         step=self.global_steps,
                         metrics=metrics,
-                        warnings=exact_step_warnings,
+                        warnings=step_warnings,
                     )
 
                 # TODO: make a canonical logger that supports various backend
@@ -1561,8 +1577,8 @@ class RayPPOTrainer:
                 )
                 if (budget_reached or next_rollout_would_exceed) and not is_last_step:
                     self._save_checkpoint()
-                    if exact_observer is not None:
-                        exact_observer.mark_budget_reached(
+                    if run_observer is not None:
+                        run_observer.mark_budget_reached(
                             step=self.global_steps,
                             metrics=metrics,
                         )
@@ -1577,8 +1593,8 @@ class RayPPOTrainer:
                 progress_bar.update(1)
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")
-                    if exact_observer is not None:
-                        exact_observer.mark_completed(step=self.global_steps, metrics=metrics)
+                    if run_observer is not None:
+                        run_observer.mark_completed(step=self.global_steps, metrics=metrics)
                     progress_bar.close()
                     return
                 self.global_steps += 1

@@ -381,6 +381,7 @@ class TrajectoryCollector:
 
             batch.non_tensor_batch['uid'] = uid_batch
             batch.non_tensor_batch['traj_uid'] = traj_uid
+            batch.non_tensor_batch["agent_step_id"] = np.full(batch_size, _step + 1, dtype=np.int64)
 
             batch = batch.union(batch_output)
             

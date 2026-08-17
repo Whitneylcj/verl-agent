@@ -90,6 +90,24 @@ def _valid_response_signature(batch: Any, row: int) -> str:
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
+def _padding_mask(batch: Any) -> np.ndarray:
+    raw_padding = batch.non_tensor_batch.get(
+        "exact_padding",
+        batch.non_tensor_batch.get("rollout_padding", np.zeros(len(batch), dtype=bool)),
+    )
+    return np.asarray(raw_padding, dtype=bool)
+
+
+def _step_ids(batch: Any) -> np.ndarray:
+    raw_steps = batch.non_tensor_batch.get(
+        "agent_step_id",
+        batch.non_tensor_batch.get("exact_step_id"),
+    )
+    if raw_steps is None:
+        raise KeyError("agentic monitoring requires agent_step_id")
+    return np.asarray(raw_steps, dtype=np.int64)
+
+
 def build_trajectory_diagnostics(
     batch: Any,
     traces: Sequence[Mapping[str, Any]],
@@ -98,17 +116,19 @@ def build_trajectory_diagnostics(
 ) -> list[dict[str, Any]]:
     """Build deterministic, no-model hypotheses for every non-padding trajectory."""
 
-    padding = np.asarray(
-        batch.non_tensor_batch.get("exact_padding", np.zeros(len(batch), dtype=bool)),
-        dtype=bool,
-    )
+    padding = _padding_mask(batch)
+    step_ids = _step_ids(batch)
     trajectory_rows: dict[str, list[int]] = {}
     for row in np.flatnonzero(~padding):
         trajectory_rows.setdefault(str(batch.non_tensor_batch["traj_uid"][row]), []).append(int(row))
     trace_by_id = {str(trace["trajectory_id"]): trace for trace in traces}
+    factor_probe_available = all(
+        key in batch.non_tensor_batch
+        for key in ("exact_factor_pre", "exact_factor_post", "exact_effect_schema")
+    )
     diagnostics = []
     for trajectory_id, rows in trajectory_rows.items():
-        rows.sort(key=lambda row: int(batch.non_tensor_batch["exact_step_id"][row]))
+        rows.sort(key=lambda row: int(step_ids[row]))
         rewards = np.asarray(batch.non_tensor_batch["episode_rewards"], dtype=np.float64)
         valid = np.asarray(
             batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool)),
@@ -117,21 +137,31 @@ def build_trajectory_diagnostics(
         episode_length = int(float(batch.non_tensor_batch.get("episode_lengths", np.full(len(batch), len(rows)))[rows[-1]]))
         tool_call_count = float(batch.non_tensor_batch.get("tool_callings", np.zeros(len(batch)))[rows[-1]])
         done = bool(batch.non_tensor_batch.get("episode_done", np.zeros(len(batch), dtype=bool))[rows[-1]])
-        fallback_steps = [int(batch.non_tensor_batch["exact_step_id"][row]) for row in rows if _schema_uses_fallback(batch.non_tensor_batch["exact_effect_schema"][row])]
+        fallback_steps = []
         factor_change_steps = []
         factor_decrease_steps = []
-        for row in rows:
-            before = _snapshot_values(batch.non_tensor_batch["exact_factor_pre"][row])
-            after = _snapshot_values(batch.non_tensor_batch["exact_factor_post"][row])
-            delta = after - before
-            step_id = int(batch.non_tensor_batch["exact_step_id"][row])
-            if np.any(np.abs(delta) > 1e-12):
-                factor_change_steps.append(step_id)
-            if np.any(delta < -1e-12):
-                factor_decrease_steps.append(step_id)
+        if factor_probe_available:
+            fallback_steps = [
+                int(step_ids[row])
+                for row in rows
+                if _schema_uses_fallback(batch.non_tensor_batch["exact_effect_schema"][row])
+            ]
+            for row in rows:
+                before = _snapshot_values(batch.non_tensor_batch["exact_factor_pre"][row])
+                after = _snapshot_values(batch.non_tensor_batch["exact_factor_post"][row])
+                delta = after - before
+                step_id = int(step_ids[row])
+                if np.any(np.abs(delta) > 1e-12):
+                    factor_change_steps.append(step_id)
+                if np.any(delta < -1e-12):
+                    factor_decrease_steps.append(step_id)
 
         response_signatures = [_valid_response_signature(batch, row) for row in rows]
-        repeated_action_steps = [int(batch.non_tensor_batch["exact_step_id"][rows[position]]) for position in range(1, len(rows)) if response_signatures[position] == response_signatures[position - 1]]
+        repeated_action_steps = [
+            int(step_ids[rows[position]])
+            for position in range(1, len(rows))
+            if response_signatures[position] == response_signatures[position - 1]
+        ]
         raw_outcomes = batch.non_tensor_batch.get(
             "trajectory_outcomes",
             np.asarray([{} for _ in range(len(batch))], dtype=object),
@@ -148,19 +178,19 @@ def build_trajectory_diagnostics(
             termination = "collector_incomplete"
 
         trace = trace_by_id.get(trajectory_id, {})
-        residual_ratio = float(trace.get("residual_ratio", 0.0))
+        residual_ratio = float(trace["residual_ratio"]) if "residual_ratio" in trace else None
         tags = []
         if not bool(np.all(valid)):
             tags.append("invalid_action")
         if termination != "success":
             tags.append(termination)
-        if not factor_change_steps:
+        if factor_probe_available and not factor_change_steps:
             tags.append("no_factor_progress")
         if repeated_action_steps:
             tags.append("repeated_action")
         if fallback_steps:
             tags.append("opaque_schema_fallback")
-        if residual_ratio >= residual_warning_ratio:
+        if residual_ratio is not None and residual_ratio >= residual_warning_ratio:
             tags.append("high_residual_ratio")
 
         diagnostics.append(
@@ -172,7 +202,8 @@ def build_trajectory_diagnostics(
                 "episode_return": float(rewards[rows[-1]]),
                 "tool_call_count": tool_call_count,
                 "valid_action_ratio": float(np.mean(valid)),
-                "invalid_step_ids": [int(batch.non_tensor_batch["exact_step_id"][row]) for row, is_valid in zip(rows, valid) if not is_valid],
+                "invalid_step_ids": [int(step_ids[row]) for row, is_valid in zip(rows, valid) if not is_valid],
+                "factor_probe_available": factor_probe_available,
                 "factor_change_step_ids": factor_change_steps,
                 "factor_decrease_step_ids": factor_decrease_steps,
                 "repeated_action_step_ids": repeated_action_steps,
@@ -181,8 +212,12 @@ def build_trajectory_diagnostics(
                 "termination": termination,
                 "diagnostic_tags": tags,
                 "residual_ratio": residual_ratio,
-                "cone_density": float(trace.get("cone_density", 0.0)),
-                "conservation_error": float(trace.get("conservation_error", 0.0)),
+                "cone_density": float(trace["cone_density"]) if "cone_density" in trace else None,
+                "conservation_error": (
+                    float(trace["conservation_error"])
+                    if "conservation_error" in trace
+                    else None
+                ),
             }
         )
     return diagnostics
@@ -198,23 +233,36 @@ def summarize_trajectory_diagnostics(
     tags = [set(item.get("diagnostic_tags", ())) for item in diagnostics]
     total_steps = sum(int(item["step_count"]) for item in diagnostics)
     invalid_steps = sum(len(item.get("invalid_step_ids", ())) for item in diagnostics)
-    result = {
-        "exact_diag/invalid_step_rate": float(invalid_steps / max(total_steps, 1)),
-        "exact_diag/invalid_trajectory_rate": float(np.mean(["invalid_action" in item for item in tags])),
-        "exact_diag/max_steps_rate": float(np.mean(["max_steps" in item for item in tags])),
-        "exact_diag/no_factor_progress_rate": float(np.mean(["no_factor_progress" in item for item in tags])),
-        "exact_diag/repeated_action_rate": float(np.mean(["repeated_action" in item for item in tags])),
-        "exact_diag/terminal_failure_rate": float(np.mean(["environment_terminal_failure" in item for item in tags])),
-        "exact_diag/factor_change_step_rate": float(sum(len(item.get("factor_change_step_ids", ())) for item in diagnostics) / max(total_steps, 1)),
+    common = {
+        "invalid_step_rate": float(invalid_steps / max(total_steps, 1)),
+        "invalid_trajectory_rate": float(np.mean(["invalid_action" in item for item in tags])),
+        "max_steps_rate": float(np.mean(["max_steps" in item for item in tags])),
+        "repeated_action_rate": float(np.mean(["repeated_action" in item for item in tags])),
+        "terminal_failure_rate": float(np.mean(["environment_terminal_failure" in item for item in tags])),
     }
+    result = {f"agent_diag/{key}": value for key, value in common.items()}
+    # Preserve existing dashboards while common agentic comparisons migrate to
+    # the estimator-independent namespace.
+    result.update({f"exact_diag/{key}": value for key, value in common.items()})
+    if any(bool(item.get("factor_probe_available")) for item in diagnostics):
+        exact_only = {
+            "no_factor_progress_rate": float(np.mean(["no_factor_progress" in item for item in tags])),
+            "factor_change_step_rate": float(
+                sum(len(item.get("factor_change_step_ids", ())) for item in diagnostics)
+                / max(total_steps, 1)
+            ),
+        }
+        result.update({f"exact_diag/{key}": value for key, value in exact_only.items()})
     primary_success = [float(item["success"]["success_rate"]) for item in diagnostics if "success_rate" in item.get("success", {})]
     if primary_success:
-        result["exact_diag/success_rate"] = float(np.mean(primary_success))
+        success_rate = float(np.mean(primary_success))
+        result["agent_diag/success_rate"] = success_rate
+        result["exact_diag/success_rate"] = success_rate
     return result
 
 
-class ExactObserver:
-    """Write heartbeat, scalar metrics, credit traces, and readable rollouts."""
+class AgentRunObserver:
+    """Write common agentic metrics plus optional EXACT credit artifacts."""
 
     def __init__(
         self,
@@ -260,7 +308,7 @@ class ExactObserver:
                 "response_length_clipping",
             ),
             (
-                "exact_diag/invalid_step_rate",
+                "agent_diag/invalid_step_rate",
                 lambda value: value >= self.invalid_step_warning_ratio,
                 "high_invalid_step_rate",
             ),
@@ -372,12 +420,60 @@ class ExactObserver:
             raise ExactSafetyStop(reason)
         return warnings
 
+    def observe_rollouts(
+        self,
+        step: int,
+        metrics: Mapping[str, Any],
+        rollout_records: Sequence[Mapping[str, Any]],
+        trajectory_diagnostics: Sequence[Mapping[str, Any]],
+    ) -> list[str]:
+        """Persist estimator-independent trajectory evidence for a baseline."""
+
+        metrics = self._validated_metrics(metrics, step=step)
+        warnings = self._metric_warnings(metrics)
+        for record in rollout_records:
+            self._append_jsonl(
+                self.output_dir / "rollout_samples.jsonl",
+                {"step": int(step), "recorded_unix": time.time(), **dict(record)},
+            )
+        for diagnostic in trajectory_diagnostics:
+            self._append_jsonl(
+                self.output_dir / "trajectory_diagnostics.jsonl",
+                {"step": int(step), "recorded_unix": time.time(), **dict(diagnostic)},
+            )
+        self._write_heartbeat(
+            status="rollout_checked",
+            step=step,
+            metrics=metrics,
+            warnings=warnings,
+        )
+        return warnings
+
+    def observe_validation(self, step: int, metrics: Mapping[str, Any]) -> None:
+        """Persist validation separately so step-zero baselines remain visible."""
+
+        metrics = self._validated_metrics(metrics, step=step)
+        self._append_jsonl(
+            self.output_dir / "validation_metrics.jsonl",
+            {"step": int(step), "recorded_unix": time.time(), "metrics": dict(metrics)},
+        )
+        self._write_heartbeat(
+            status="validated",
+            step=step,
+            metrics=metrics,
+            warnings=self._metric_warnings(metrics),
+        )
+
     def complete_step(self, step: int, metrics: Mapping[str, Any], warnings: Sequence[str]) -> None:
         metrics = self._validated_metrics(metrics, step=step)
-        exact_env_steps = int(float(metrics.get("exact/env_step_count", 0)))
-        exact_tokens = int(float(metrics.get("exact/generated_token_count", 0)))
-        self.cumulative_env_steps += exact_env_steps
-        self.cumulative_generated_tokens += exact_tokens
+        if "training/cumulative_env_steps" in metrics:
+            self.cumulative_env_steps = int(float(metrics["training/cumulative_env_steps"]))
+        else:
+            self.cumulative_env_steps += int(float(metrics.get("exact/env_step_count", 0)))
+        if "training/cumulative_generated_tokens" in metrics:
+            self.cumulative_generated_tokens = int(float(metrics["training/cumulative_generated_tokens"]))
+        else:
+            self.cumulative_generated_tokens += int(float(metrics.get("exact/generated_token_count", 0)))
         payload = {"step": int(step), "recorded_unix": time.time(), "metrics": dict(metrics)}
         self._append_jsonl(self.output_dir / "metrics.jsonl", payload)
         final_warnings = list(dict.fromkeys([*warnings, *self._metric_warnings(metrics)]))
@@ -415,10 +511,8 @@ def build_rollout_records(
 ) -> list[dict[str, Any]]:
     """Select deterministic diagnostic strata and decode one representative row each."""
 
-    padding = np.asarray(
-        batch.non_tensor_batch.get("exact_padding", np.zeros(len(batch), dtype=bool)),
-        dtype=bool,
-    )
+    padding = _padding_mask(batch)
+    step_ids = _step_ids(batch)
     candidates = np.flatnonzero(~padding)
     if candidates.size == 0:
         return []
@@ -431,11 +525,11 @@ def build_rollout_records(
         trajectory_rows.setdefault(str(batch.non_tensor_batch["traj_uid"][row]), []).append(int(row))
     representative = {}
     for trajectory_id, rows in trajectory_rows.items():
-        rows.sort(key=lambda row: int(batch.non_tensor_batch["exact_step_id"][row]))
+        rows.sort(key=lambda row: int(step_ids[row]))
         diagnostic = diagnostics.get(trajectory_id, {})
         invalid_steps = set(diagnostic.get("invalid_step_ids", ()))
         representative[trajectory_id] = next(
-            (row for row in rows if int(batch.non_tensor_batch["exact_step_id"][row]) in invalid_steps),
+            (row for row in rows if int(step_ids[row]) in invalid_steps),
             rows[-1],
         )
 
@@ -475,7 +569,7 @@ def build_rollout_records(
             {
                 "row": row,
                 "trajectory_id": trajectory_id,
-                "step_id": int(batch.non_tensor_batch["exact_step_id"][row]),
+                "step_id": int(step_ids[row]),
                 "episode_return": float(rewards[row]),
                 "is_action_valid": bool(batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool))[row]),
                 "credit_token_sum": float(batch.batch["advantages"][row].sum().item()),
@@ -486,3 +580,7 @@ def build_rollout_records(
             }
         )
     return records
+
+
+# Backward-compatible import for existing EXACT-only callers.
+ExactObserver = AgentRunObserver

@@ -166,6 +166,8 @@ def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
     assert by_id["t2"]["termination"] == "success"
 
     metrics = summarize_trajectory_diagnostics(diagnostics)
+    assert metrics["agent_diag/success_rate"] == 0.5
+    assert metrics["agent_diag/invalid_step_rate"] == 1 / 3
     assert metrics["exact_diag/success_rate"] == 0.5
     assert metrics["exact_diag/invalid_step_rate"] == 1 / 3
 
@@ -177,6 +179,31 @@ def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
     record_by_id = {item["trajectory_id"]: item for item in records}
     assert record_by_id["t1"]["step_id"] == 2
     assert "invalid_action" in record_by_id["t1"]["diagnostic_tags"]
+
+
+def test_baseline_diagnostics_do_not_invent_exact_factor_signals():
+    batch = _diagnostic_batch()
+    batch.non_tensor_batch["agent_step_id"] = batch.non_tensor_batch.pop("exact_step_id")
+    batch.non_tensor_batch["rollout_padding"] = batch.non_tensor_batch.pop("exact_padding")
+    for key in ("exact_factor_pre", "exact_factor_post", "exact_effect_schema"):
+        batch.non_tensor_batch.pop(key)
+
+    diagnostics = build_trajectory_diagnostics(batch, [], max_steps=2)
+    by_id = {item["trajectory_id"]: item for item in diagnostics}
+    assert by_id["t1"]["factor_probe_available"] is False
+    assert "no_factor_progress" not in by_id["t1"]["diagnostic_tags"]
+    assert by_id["t1"]["residual_ratio"] is None
+
+    metrics = summarize_trajectory_diagnostics(diagnostics)
+    assert metrics["agent_diag/invalid_step_rate"] == 1 / 3
+    assert "exact_diag/no_factor_progress_rate" not in metrics
+
+    records = build_rollout_records(
+        _Tokenizer(),
+        batch,
+        trajectory_diagnostics=diagnostics,
+    )
+    assert {record["step_id"] for record in records} <= {1, 2}
 
 
 def test_rollout_redaction_bounds_text_and_removes_common_secrets():
@@ -194,3 +221,39 @@ def test_observer_emits_soft_alerts_after_optimizer_metrics(tmp_path):
 
     alert = json.loads((tmp_path / "alerts.jsonl").read_text().splitlines()[0])
     assert "high_ppo_kl" in alert["warnings"]
+
+
+def test_observer_writes_common_baseline_rollouts_and_syncs_budgets(tmp_path):
+    observer = ExactObserver(tmp_path, invalid_step_warning_ratio=0.2)
+    warnings = observer.observe_rollouts(
+        step=1,
+        metrics={"agent_diag/invalid_step_rate": 0.5},
+        rollout_records=[{"trajectory_id": "t1", "response": "bad action"}],
+        trajectory_diagnostics=[{"trajectory_id": "t1", "diagnostic_tags": ["invalid_action"]}],
+    )
+    assert warnings == ["high_invalid_step_rate"]
+
+    observer.complete_step(
+        1,
+        {
+            "training/cumulative_env_steps": 7,
+            "training/cumulative_generated_tokens": 53,
+        },
+        warnings,
+    )
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["cumulative_env_steps"] == 7
+    assert heartbeat["cumulative_generated_tokens"] == 53
+    assert (tmp_path / "rollout_samples.jsonl").exists()
+    assert (tmp_path / "trajectory_diagnostics.jsonl").exists()
+
+
+def test_observer_persists_step_zero_validation(tmp_path):
+    observer = ExactObserver(tmp_path)
+    observer.observe_validation(0, {"val/success_rate": np.float64(0.25)})
+
+    record = json.loads((tmp_path / "validation_metrics.jsonl").read_text().splitlines()[0])
+    assert record["step"] == 0
+    assert record["metrics"]["val/success_rate"] == 0.25
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["status"] == "validated"

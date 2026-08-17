@@ -1,4 +1,4 @@
-"""Summarize an EXACT run without loading a model or contacting an environment."""
+"""Summarize an agentic baseline or EXACT run without loading its model."""
 
 from __future__ import annotations
 
@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 DEFAULT_METRICS = (
-    "exact_diag/success_rate",
+    "agent_diag/success_rate",
     "episode/reward/mean",
     "episode/length/mean",
-    "exact_diag/invalid_step_rate",
+    "agent_diag/invalid_step_rate",
+    "agent_diag/invalid_trajectory_rate",
+    "agent_diag/max_steps_rate",
+    "agent_diag/terminal_failure_rate",
+    "agent_diag/repeated_action_rate",
     "exact_diag/no_factor_progress_rate",
-    "exact_diag/repeated_action_rate",
     "exact/residual_ratio_mean",
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
@@ -82,6 +85,7 @@ def build_run_report(
     monitor_dir = _resolve_monitor_dir(run_dir)
     heartbeat = _read_json(monitor_dir / "heartbeat.json")
     metric_records = _tail_jsonl(monitor_dir / "metrics.jsonl", window)
+    validation_records = _tail_jsonl(monitor_dir / "validation_metrics.jsonl", window)
     diagnostic_records = _tail_jsonl(monitor_dir / "trajectory_diagnostics.jsonl", window * 64)
     alert_records = _tail_jsonl(monitor_dir / "alerts.jsonl", window)
     rollout_records = _tail_jsonl(monitor_dir / "rollout_samples.jsonl", rollout_count)
@@ -130,6 +134,7 @@ def build_run_report(
         "monitor_dir": str(monitor_dir),
         "heartbeat": heartbeat,
         "latest_step": latest_metrics.get("training/global_step"),
+        "latest_validation": validation_records[-1] if validation_records else None,
         "window_steps": sorted(active_steps),
         "trends": trends,
         "diagnostic_tag_counts": dict(sorted(tag_counts.items())),

@@ -14,7 +14,14 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
     (monitor / "heartbeat.json").write_text(json.dumps({"status": "running", "step": 2, "warnings": ["high_ppo_kl"]}))
     _append(
         monitor / "metrics.jsonl",
-        {"step": 1, "metrics": {"training/global_step": 1, "actor/ppo_kl": 0.01}},
+        {
+            "step": 1,
+            "metrics": {
+                "training/global_step": 1,
+                "actor/ppo_kl": 0.01,
+                "agent_diag/invalid_step_rate": 0.5,
+            },
+        },
     )
     _append(
         monitor / "metrics.jsonl",
@@ -29,6 +36,10 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
         {"step": 2, "warnings": ["high_ppo_kl"]},
     )
     _append(
+        monitor / "validation_metrics.jsonl",
+        {"step": 2, "metrics": {"val/success_rate": 0.25}},
+    )
+    _append(
         monitor / "rollout_samples.jsonl",
         {"step": 2, "trajectory_id": "t1", "prompt": "task", "response": "bad action"},
     )
@@ -36,8 +47,10 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
     report = build_run_report(tmp_path, window=2, rollout_count=1)
     assert report["latest_step"] == 2
     assert report["trends"]["actor/ppo_kl"]["window_delta"] == 0.19
+    assert report["trends"]["agent_diag/invalid_step_rate"]["latest"] == 0.5
     assert report["diagnostic_tag_counts"] == {"invalid_action": 1, "max_steps": 1}
     assert report["recent_alerts"][0]["warnings"] == ["high_ppo_kl"]
+    assert report["latest_validation"]["metrics"]["val/success_rate"] == 0.25
     assert report["rollout_samples"][0]["response"] == "bad action"
 
 
