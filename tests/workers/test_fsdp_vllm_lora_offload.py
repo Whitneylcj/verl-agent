@@ -49,6 +49,9 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     manager.full_params = False
     manager.device_mesh = None
     manager.update_params = lambda params, peft_config=None: events.append("update_lora")
+    manager._weights_dirty = True
+    manager._staged_lora_params = None
+    manager._staged_peft_config = None
 
     fake_device = _FakeDevice()
     fake_device.events = events
@@ -83,3 +86,12 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
         "update_lora",
         "wake_kv_cache",
     ]
+
+    events.clear()
+    manager.__enter__()
+    assert events == ["wake_weights", "wake_kv_cache"]
+
+    events.clear()
+    manager.stage_updated_weights()
+    manager.__enter__()
+    assert events == ["wake_weights", "update_lora", "wake_kv_cache"]

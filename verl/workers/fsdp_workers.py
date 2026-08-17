@@ -565,7 +565,7 @@ class ActorRolloutRefWorker(Worker):
                 self.config.actor.use_fused_kernels = use_fused_kernels
             self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
 
-        if self._is_rollout:
+        if self._is_rollout and hasattr(self.rollout_sharding_manager, "stage_updated_weights"):
             self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
 
         if self._is_ref:
@@ -630,6 +630,14 @@ class ActorRolloutRefWorker(Worker):
 
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
             output = output.to("cpu")
+
+        if self._is_rollout:
+            # The updated LoRA state is cheapest to collect before the actor is
+            # offloaded.  Staging a detached CPU copy prevents the next rollout
+            # from transiently loading both the full actor and vLLM weights.
+            del data
+            get_torch_device().empty_cache()
+            self.rollout_sharding_manager.stage_updated_weights()
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)

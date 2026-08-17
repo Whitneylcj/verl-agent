@@ -107,8 +107,48 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             self.gen_random_states = None
 
         self.base_sync_done: bool = 'dummy' not in load_format
+        self._weights_dirty = True
+        self._staged_lora_params = None
+        self._staged_peft_config = None
         if is_version_ge(pkg='vllm', minver='0.7.3'):
             VLLMHijack.hijack()
+
+    def stage_updated_weights(self):
+        """Stage updated LoRA weights while the training actor is still resident."""
+
+        self._weights_dirty = True
+        self._staged_lora_params = None
+        self._staged_peft_config = None
+        wrapped_module = self.module._fsdp_wrapped_module
+        if not isinstance(wrapped_module, PeftModel):
+            return
+        if not self.base_sync_done:
+            return
+        from peft.utils.save_and_load import get_peft_model_state_dict
+
+        if fsdp_version(self.module) > 0 and self.layered_summon:
+            params = layered_summon_lora_params(self.module)
+        elif fsdp_version(self.module) > 0:
+            with FSDP.summon_full_params(self.module, writeback=False):
+                params = get_peft_model_state_dict(wrapped_module)
+                params = {
+                    name: param.full_tensor().detach().cpu()
+                    if hasattr(param, 'full_tensor')
+                    else param.detach().cpu()
+                    for name, param in params.items()
+                }
+        else:
+            params = {
+                name: param.detach().cpu()
+                for name, param in get_peft_model_state_dict(wrapped_module).items()
+            }
+        if not params or any(
+            getattr(param, "device", None) is None or param.device.type != "cpu"
+            for param in params.values()
+        ):
+            raise RuntimeError("staged LoRA parameters must be a non-empty CPU state dict")
+        self._staged_lora_params = params
+        self._staged_peft_config = wrapped_module.peft_config.get('default', None)
 
     @GPUMemoryLogger(role="fsdp vllm sharding_manager", logger=logger)
     def __enter__(self):
@@ -166,17 +206,26 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         # vllm: https://github.com/vllm-project/vllm/blob/v0.7.3/vllm/device_allocator/cumem.py#L103
         get_torch_device().empty_cache()
 
-        log_gpu_memory_usage("Before state_dict() in sharding manager memory", logger=logger)
-        if self.offload_param:
-            load_fsdp_model_to_gpu(self.module)
-
+        legacy_vllm = vllm_version in ("0.5.4", "0.6.3")
+        reuse_sleeping_weights = not legacy_vllm and not self._weights_dirty
+        actor_loaded_for_sync = False
         peft_config = None
-        if isinstance(self.module._fsdp_wrapped_module, PeftModel):
-            peft_config = self.module._fsdp_wrapped_module.peft_config.get('default', None)
-            params = __collect_lora_params()
-        else:
-            params = self.module.state_dict()
-        log_gpu_memory_usage("After state_dict() in sharding manager memory", logger=logger)
+        params = None
+        if not reuse_sleeping_weights:
+            if self._staged_lora_params is not None:
+                params = self._staged_lora_params
+                peft_config = self._staged_peft_config
+            else:
+                log_gpu_memory_usage("Before state_dict() in sharding manager memory", logger=logger)
+                if self.offload_param:
+                    load_fsdp_model_to_gpu(self.module)
+                    actor_loaded_for_sync = True
+                if isinstance(self.module._fsdp_wrapped_module, PeftModel):
+                    peft_config = self.module._fsdp_wrapped_module.peft_config.get('default', None)
+                    params = __collect_lora_params()
+                else:
+                    params = self.module.state_dict()
+                log_gpu_memory_usage("After state_dict() in sharding manager memory", logger=logger)
 
         # Layered LoRA collection materializes a detached CPU state dict.  Once
         # that copy exists, keeping the full FSDP actor on GPU while waking the
@@ -190,7 +239,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             getattr(param, "device", None) is not None and param.device.type == "cpu"
             for param in params.values()
         )
-        if self.offload_param and lora_params_are_cpu:
+        if actor_loaded_for_sync and self.offload_param and lora_params_are_cpu:
             offload_fsdp_model_to_cpu(self.module)
             # FSDP offload uses non-blocking device-to-host copies.  vLLM's
             # CuMem allocator cannot remap its weight handles until those
@@ -203,10 +252,9 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         # Copy, not share memory
         load_format = "hf" if self.full_params else "dtensor"
 
-        if vllm_version in (
-            "0.5.4",
-            "0.6.3",
-        ):
+        if legacy_vllm:
+            if params is None:
+                raise RuntimeError("legacy vLLM weight sync requires a materialized state dict")
             self.inference_engine.sync_model_weights(params, load_format=load_format)
             log_gpu_memory_usage("After sync model weights in sharding manager", logger=logger)
             del params
@@ -216,17 +264,22 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             else:
                 self.inference_engine.wake_up()
 
-            # update model params
-            self.update_params(params, peft_config=peft_config)
-            log_gpu_memory_usage("After sync model weights in sharding manager", logger=logger)
-            del params
-            if self.offload_param and not actor_offloaded_before_wake:
+            # update model params only when training changed them.  vLLM sleep
+            # level 1 preserves the registered weights for later remapping.
+            if params is not None:
+                self.update_params(params, peft_config=peft_config)
+                log_gpu_memory_usage("After sync model weights in sharding manager", logger=logger)
+                del params
+            if actor_loaded_for_sync and self.offload_param and not actor_offloaded_before_wake:
                 offload_fsdp_model_to_cpu(self.module)
             get_torch_device().empty_cache()
 
             if "tags" in inspect.signature(self.inference_engine.wake_up).parameters:
                 self.inference_engine.wake_up(tags=["kv_cache"])
 
+        self._weights_dirty = False
+        self._staged_lora_params = None
+        self._staged_peft_config = None
         log_gpu_memory_usage("After del state_dict and empty_cache in sharding manager", logger=logger)
 
         # important: need to manually set the random states of each tp to be identical.
