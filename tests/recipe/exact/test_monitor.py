@@ -11,6 +11,7 @@ from recipe.exact.monitor import (
     build_trajectory_diagnostics,
     redact_rollout_text,
     summarize_trajectory_diagnostics,
+    summarize_validation_action_validity,
 )
 
 
@@ -197,6 +198,22 @@ def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
     record_by_id = {item["trajectory_id"]: item for item in records}
     assert record_by_id["t1"]["step_id"] == 2
     assert "invalid_action" in record_by_id["t1"]["diagnostic_tags"]
+
+
+def test_validation_action_validity_keeps_syntax_and_execution_separate():
+    metrics = summarize_validation_action_validity(
+        {
+            "is_action_valid": [np.array([True, False]), np.array([False])],
+            "is_action_syntax_valid": [np.array([True, True]), np.array([False])],
+            "is_action_execution_valid": [np.array([True, False]), np.array([False])],
+        }
+    )
+
+    assert metrics == {
+        "val/agent_diag/invalid_step_rate": 2 / 3,
+        "val/agent_diag/syntax_invalid_step_rate": 1 / 3,
+        "val/agent_diag/execution_error_step_rate": 2 / 3,
+    }
 
 
 def test_baseline_diagnostics_do_not_invent_exact_factor_signals():

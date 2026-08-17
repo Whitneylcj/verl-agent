@@ -95,6 +95,16 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
         value = trends.get(metric, {}).get("latest")
         return float(value) if isinstance(value, (int, float)) else None
 
+    validation_metrics = (report.get("latest_validation") or {}).get("metrics", {})
+
+    def latest_or_validation(metric: str) -> tuple[str, float | None]:
+        value = latest(metric)
+        if value is not None:
+            return metric, value
+        validation_metric = f"val/{metric}"
+        value = validation_metrics.get(validation_metric)
+        return validation_metric, float(value) if isinstance(value, (int, float)) else None
+
     diagnoses = []
 
     def add(code: str, severity: str, evidence: Mapping[str, Any], next_checks: Sequence[str]) -> None:
@@ -161,34 +171,34 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "check GPU utilization and Ray workers before interrupting the run",
             ),
         )
-    invalid_rate = latest("agent_diag/invalid_step_rate")
+    invalid_metric, invalid_rate = latest_or_validation("agent_diag/invalid_step_rate")
     if invalid_rate is not None and invalid_rate >= 0.2:
         add(
             "high_invalid_action_rate",
             "high",
-            {"agent_diag/invalid_step_rate": invalid_rate},
+            {invalid_metric: invalid_rate},
             (
                 "inspect invalid-action rollout samples",
                 "compare syntax-invalid and execution-error rates before changing the parser",
             ),
         )
-    syntax_invalid_rate = latest("agent_diag/syntax_invalid_step_rate")
+    syntax_invalid_metric, syntax_invalid_rate = latest_or_validation("agent_diag/syntax_invalid_step_rate")
     if syntax_invalid_rate is not None and syntax_invalid_rate >= 0.2:
         add(
             "high_action_syntax_error_rate",
             "high",
-            {"agent_diag/syntax_invalid_step_rate": syntax_invalid_rate},
+            {syntax_invalid_metric: syntax_invalid_rate},
             (
                 "inspect raw model responses against the advertised JSON contract",
                 "check projection failures without weakening the one-call boundary",
             ),
         )
-    execution_error_rate = latest("agent_diag/execution_error_step_rate")
+    execution_error_metric, execution_error_rate = latest_or_validation("agent_diag/execution_error_step_rate")
     if execution_error_rate is not None and execution_error_rate >= 0.2:
         add(
             "appworld_api_execution_errors",
             "high",
-            {"agent_diag/execution_error_step_rate": execution_error_rate},
+            {execution_error_metric: execution_error_rate},
             (
                 "inspect AppWorld errors for hallucinated APIs and invalid arguments",
                 "verify the policy queries API documentation after an execution error",

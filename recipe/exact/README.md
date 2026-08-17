@@ -243,7 +243,10 @@ inspector never changes prompts, rewards, budgets, or optimizer settings.
 Compare all estimators using `agent_diag/success_rate`, invalid-step and
 trajectory rates, max-step/terminal-failure rates, repeated actions, reward,
 episode length, KL/clip fraction, entropy, gradient norm, response clipping,
-throughput, and validation metrics. For EXACT also track
+throughput, and validation metrics. AppWorld splits invalid steps into JSON
+syntax/projection failures and executed API/argument failures for both training
+and validation; do not diagnose the parser from the combined rate alone. For
+EXACT also track
 `exact/conservation_error_max`, `exact/residual_ratio_mean`,
 `exact/cone_density_mean`, `exact/schema_fallback_rate`, credit quantiles,
 factor-progress rates, verifier snapshot cost, and active GPU-hours. AppWorld

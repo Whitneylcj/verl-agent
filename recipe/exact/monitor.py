@@ -309,6 +309,27 @@ def summarize_trajectory_diagnostics(
     return result
 
 
+def summarize_validation_action_validity(
+    validity_chunks: Mapping[str, Sequence[np.ndarray]],
+) -> dict[str, float]:
+    """Aggregate active validation-step validity without trajectory duplication."""
+
+    fields = {
+        "is_action_valid": "val/agent_diag/invalid_step_rate",
+        "is_action_syntax_valid": "val/agent_diag/syntax_invalid_step_rate",
+        "is_action_execution_valid": "val/agent_diag/execution_error_step_rate",
+    }
+    result = {}
+    for field, metric in fields.items():
+        chunks = validity_chunks.get(field, ())
+        if not chunks:
+            continue
+        values = np.concatenate([np.asarray(chunk, dtype=bool).reshape(-1) for chunk in chunks])
+        if values.size:
+            result[metric] = float(np.mean(~values))
+    return result
+
+
 class AgentRunObserver:
     """Write common agentic metrics plus optional EXACT credit artifacts."""
 

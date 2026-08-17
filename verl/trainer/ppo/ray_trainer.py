@@ -733,6 +733,11 @@ class RayPPOTrainer:
         tool_calling_list = []
         traj_uid_list = []
         success_rate_dict = {}
+        validation_action_validity = {
+            "is_action_valid": [],
+            "is_action_syntax_valid": [],
+            "is_action_execution_valid": [],
+        }
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -813,6 +818,11 @@ class RayPPOTrainer:
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
+            for validity_key in validation_action_validity:
+                if validity_key in test_output_gen_batch.non_tensor_batch:
+                    validation_action_validity[validity_key].append(
+                        test_output_gen_batch.non_tensor_batch[validity_key]
+                    )
             # success rate
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
@@ -881,6 +891,10 @@ class RayPPOTrainer:
 
         for k, v in success_rate.items():
             metric_dict[f'val/{k}'] = v
+
+        from recipe.exact.monitor import summarize_validation_action_validity
+
+        metric_dict.update(summarize_validation_action_validity(validation_action_validity))
 
         return metric_dict
 
