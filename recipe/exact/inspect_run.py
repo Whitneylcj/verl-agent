@@ -15,6 +15,8 @@ DEFAULT_METRICS = (
     "episode/reward/mean",
     "episode/length/mean",
     "agent_diag/invalid_step_rate",
+    "agent_diag/syntax_invalid_step_rate",
+    "agent_diag/execution_error_step_rate",
     "agent_diag/invalid_trajectory_rate",
     "agent_diag/max_steps_rate",
     "agent_diag/terminal_failure_rate",
@@ -172,7 +174,29 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             {"agent_diag/invalid_step_rate": invalid_rate},
             (
                 "inspect invalid-action rollout samples",
-                "check action tags, parser projection, and advertised legal actions",
+                "compare syntax-invalid and execution-error rates before changing the parser",
+            ),
+        )
+    syntax_invalid_rate = latest("agent_diag/syntax_invalid_step_rate")
+    if syntax_invalid_rate is not None and syntax_invalid_rate >= 0.2:
+        add(
+            "high_action_syntax_error_rate",
+            "high",
+            {"agent_diag/syntax_invalid_step_rate": syntax_invalid_rate},
+            (
+                "inspect raw model responses against the advertised JSON contract",
+                "check projection failures without weakening the one-call boundary",
+            ),
+        )
+    execution_error_rate = latest("agent_diag/execution_error_step_rate")
+    if execution_error_rate is not None and execution_error_rate >= 0.2:
+        add(
+            "appworld_api_execution_errors",
+            "high",
+            {"agent_diag/execution_error_step_rate": execution_error_rate},
+            (
+                "inspect AppWorld errors for hallucinated APIs and invalid arguments",
+                "verify the policy queries API documentation after an execution error",
             ),
         )
     repeated_rate = latest("agent_diag/repeated_action_rate")
@@ -385,6 +409,8 @@ def build_run_report(
                     "step_id",
                     "episode_return",
                     "is_action_valid",
+                    "is_action_syntax_valid",
+                    "is_action_execution_valid",
                     "credit_token_sum",
                     "diagnostic_tags",
                     "termination",

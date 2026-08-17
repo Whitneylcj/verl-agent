@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("omegaconf")
 
 from agent_system.environments.env_manager import AppWorldEnvironmentManager
+from agent_system.environments.env_package.appworld.envs import appworld_execution_succeeded
 
 
 class _FakeAppWorldEnvs:
@@ -13,7 +14,14 @@ class _FakeAppWorldEnvs:
 
     def step(self, actions):
         self.projected_actions = list(actions)
-        return ["document result"], [0.0], [False], [{"won": False}]
+        return ["document result"], [0.0], [False], [
+            {"won": False, "is_action_execution_valid": False}
+        ]
+
+
+def test_appworld_execution_error_detector_uses_runtime_prefix():
+    assert appworld_execution_succeeded("{'playlists': []}")
+    assert not appworld_execution_succeeded("\nExecution failed. Traceback:\nException: bad API")
 
 
 def test_json_api_history_keeps_model_action_not_compiled_python():
@@ -48,4 +56,7 @@ def test_json_api_history_keeps_model_action_not_compiled_python():
     assert envs.projected_actions == ["print(apis.api_docs.show_app_descriptions(**{}))"]
     assert manager.memory[0][0]["action"] == model_action
     assert f"Action 1:\n{model_action}" in observations["text"][0]
-    assert bool(infos[0]["is_action_valid"])
+    assert bool(infos[0]["is_action_syntax_valid"])
+    assert not bool(infos[0]["is_action_execution_valid"])
+    assert not bool(infos[0]["is_action_valid"])
+    assert infos[0]["tool_calling"] == 1.0

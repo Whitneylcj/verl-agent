@@ -443,6 +443,12 @@ class TrajectoryCollector:
                 batch.non_tensor_batch['is_action_valid'] = np.array([info['is_action_valid'] for info in infos], dtype=bool)
             else:
                 batch.non_tensor_batch['is_action_valid'] = np.ones(batch_size, dtype=bool)
+            for validity_key in ('is_action_syntax_valid', 'is_action_execution_valid'):
+                if validity_key in infos[0]:
+                    batch.non_tensor_batch[validity_key] = np.array(
+                        [info[validity_key] for info in infos],
+                        dtype=bool,
+                    )
             batch.non_tensor_batch['episode_done'] = np.asarray(dones, dtype=bool)
 
             if 'tool_calling' in infos[0]:

@@ -177,6 +177,12 @@ if [[ "${PILOT_AUTHORIZED:-0}" != "1" ]]; then
   echo "Set PILOT_AUTHORIZED=1 only after paid GPU rollout/training is approved" >&2
   exit 2
 fi
+if [[ "${environment_name}" == "appworld" ]]; then
+  required_appworld_services=$((train_size * group_size + validation_size))
+  python3 -m recipe.exact.check_appworld_services \
+    --port-file "${APPWORLD_PORT_FILE}" \
+    --required "${required_appworld_services}"
+fi
 export EXACT_TOY_AUDIT_PATH=${EXACT_TOY_AUDIT_PATH:-/root/autodl-tmp/config/exact/toy-audit.json}
 python3 -m recipe.exact.toy_audit --verify "${EXACT_TOY_AUDIT_PATH}"
 if [[ "${environment_name}" == "appworld" && "${algorithm_name}" == "exact" ]]; then

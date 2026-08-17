@@ -23,6 +23,12 @@ import appworld
 from appworld import AppWorld, load_task_ids
 
 
+def appworld_execution_succeeded(observation):
+    """Return whether AppWorld executed the projected API call without error."""
+
+    return not str(observation).lstrip().startswith("Execution failed.")
+
+
 def load_available_ports(port_file="appworld_ports.ports"):
     """
     Load available port list from file
@@ -170,6 +176,7 @@ class AppWorldWorker:
         self.current_step_count += 1
 
         obs = self.env.execute(action)
+        execution_valid = appworld_execution_succeeded(obs)
 
         evaluation, self._exact_snapshot = self._evaluate_exact()
 
@@ -179,10 +186,18 @@ class AppWorldWorker:
             is_success = evaluation.success
 
             reward = 10.0 if is_success else 0.0
-            info = {"won": is_success, "step_count": self.current_step_count}
+            info = {
+                "won": is_success,
+                "step_count": self.current_step_count,
+                "is_action_execution_valid": execution_valid,
+            }
         else:
             reward = 0.0
-            info = {"won": False, "step_count": self.current_step_count}
+            info = {
+                "won": False,
+                "step_count": self.current_step_count,
+                "is_action_execution_valid": execution_valid,
+            }
 
         return obs, reward, done, info
 

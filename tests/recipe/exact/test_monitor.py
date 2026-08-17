@@ -61,6 +61,8 @@ def _diagnostic_batch():
             "episode_lengths": np.array([2, 2, 1]),
             "tool_callings": np.array([2, 2, 1]),
             "is_action_valid": np.array([True, False, True]),
+            "is_action_syntax_valid": np.array([True, True, True]),
+            "is_action_execution_valid": np.array([True, False, True]),
             "episode_done": np.array([False, False, True]),
             "trajectory_outcomes": np.array(
                 [{"success_rate": 0.0}, {"success_rate": 0.0}, {"success_rate": 1.0}],
@@ -182,6 +184,8 @@ def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
     metrics = summarize_trajectory_diagnostics(diagnostics)
     assert metrics["agent_diag/success_rate"] == 0.5
     assert metrics["agent_diag/invalid_step_rate"] == 1 / 3
+    assert metrics["agent_diag/syntax_invalid_step_rate"] == 0.0
+    assert metrics["agent_diag/execution_error_step_rate"] == 1 / 3
     assert metrics["exact_diag/success_rate"] == 0.5
     assert metrics["exact_diag/invalid_step_rate"] == 1 / 3
 

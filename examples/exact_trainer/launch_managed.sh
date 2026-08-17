@@ -31,7 +31,7 @@ fi
 
 mkdir -p "${log_root}"
 export EXACT_CONSOLE_LOG=${log_file}
-screen -DmS "${session_name}" -L -Logfile "${log_file}" \
+screen -dmS "${session_name}" -L -Logfile "${log_file}" \
   bash "${script_dir}/run_exact.sh" "${environment_name}" "$@"
 
 sleep 1

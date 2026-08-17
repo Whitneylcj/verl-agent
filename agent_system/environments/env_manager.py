@@ -554,9 +554,14 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
 
         full_text_obs = self.build_text_obs(text_obs)
 
-        # add action_valid to infos
+        # Keep syntax/projection validity separate from AppWorld API execution.
         for i, info in enumerate(infos):
-            info['is_action_valid'] = to_numpy(valids[i])
+            syntax_valid = bool(valids[i])
+            execution_valid = bool(info.get('is_action_execution_valid', True))
+            info['is_action_syntax_valid'] = to_numpy(syntax_valid)
+            info['is_action_execution_valid'] = to_numpy(execution_valid)
+            info['is_action_valid'] = to_numpy(syntax_valid and execution_valid)
+            info['tool_calling'] = float(syntax_valid)
 
         next_observations = {'text': full_text_obs, 'image': None, 'anchor': text_obs}
         rewards = to_numpy(rewards)

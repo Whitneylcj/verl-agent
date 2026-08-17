@@ -9,6 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_EXACT = REPO_ROOT / "examples" / "exact_trainer" / "run_exact.sh"
+LAUNCH_MANAGED = REPO_ROOT / "examples" / "exact_trainer" / "launch_managed.sh"
 
 
 def _run_dir(environment: str, **extra_env: str) -> str:
@@ -62,3 +63,15 @@ def test_prepared_data_paths_are_bound_to_requested_sizes() -> None:
 def test_nvidia_pilot_defaults_to_flash_attention() -> None:
     launcher = RUN_EXACT.read_text()
     assert "VLLM_ATTENTION_BACKEND=${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}" in launcher
+
+
+def test_managed_launcher_detaches_without_waiting_for_training() -> None:
+    launcher = LAUNCH_MANAGED.read_text()
+    assert 'screen -dmS "${session_name}"' in launcher
+    assert 'screen -DmS "${session_name}"' not in launcher
+
+
+def test_appworld_checks_required_service_capacity_before_training() -> None:
+    launcher = RUN_EXACT.read_text()
+    assert "required_appworld_services=$((train_size * group_size + validation_size))" in launcher
+    assert "python3 -m recipe.exact.check_appworld_services" in launcher

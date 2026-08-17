@@ -20,6 +20,8 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
                 "training/global_step": 1,
                 "actor/ppo_kl": 0.01,
                 "agent_diag/invalid_step_rate": 0.5,
+                "agent_diag/syntax_invalid_step_rate": 0.25,
+                "agent_diag/execution_error_step_rate": 0.4,
                 "agent_diag/repeated_action_rate": 0.25,
             },
         },
@@ -54,7 +56,13 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
     assert report["latest_validation"]["metrics"]["val/success_rate"] == 0.25
     assert report["rollout_samples"][0]["response"] == "bad action"
     diagnosis_codes = {diagnosis["code"] for diagnosis in report["diagnoses"]}
-    assert {"high_invalid_action_rate", "policy_action_loop", "large_policy_update"} <= diagnosis_codes
+    assert {
+        "high_invalid_action_rate",
+        "high_action_syntax_error_rate",
+        "appworld_api_execution_errors",
+        "policy_action_loop",
+        "large_policy_update",
+    } <= diagnosis_codes
 
 
 def test_inspect_run_handles_initialized_but_empty_monitor(tmp_path):

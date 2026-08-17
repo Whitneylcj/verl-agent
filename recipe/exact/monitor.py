@@ -167,6 +167,8 @@ def build_trajectory_diagnostics(
         trajectory_rows.setdefault(str(batch.non_tensor_batch["traj_uid"][row]), []).append(int(row))
     trace_by_id = {str(trace["trajectory_id"]): trace for trace in traces}
     factor_probe_available = all(key in batch.non_tensor_batch for key in ("exact_factor_pre", "exact_factor_post", "exact_effect_schema"))
+    syntax_validity_available = "is_action_syntax_valid" in batch.non_tensor_batch
+    execution_validity_available = "is_action_execution_valid" in batch.non_tensor_batch
     diagnostics = []
     for trajectory_id, rows in trajectory_rows.items():
         rows.sort(key=lambda row: int(step_ids[row]))
@@ -175,6 +177,16 @@ def build_trajectory_diagnostics(
             batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool)),
             dtype=bool,
         )[rows]
+        syntax_valid = (
+            np.asarray(batch.non_tensor_batch["is_action_syntax_valid"], dtype=bool)[rows]
+            if syntax_validity_available
+            else None
+        )
+        execution_valid = (
+            np.asarray(batch.non_tensor_batch["is_action_execution_valid"], dtype=bool)[rows]
+            if execution_validity_available
+            else None
+        )
         episode_length = int(float(batch.non_tensor_batch.get("episode_lengths", np.full(len(batch), len(rows)))[rows[-1]]))
         tool_call_count = float(batch.non_tensor_batch.get("tool_callings", np.zeros(len(batch)))[rows[-1]])
         done = bool(batch.non_tensor_batch.get("episode_done", np.zeros(len(batch), dtype=bool))[rows[-1]])
@@ -230,6 +242,10 @@ def build_trajectory_diagnostics(
         tags = []
         if not bool(np.all(valid)):
             tags.append("invalid_action")
+        if syntax_valid is not None and not bool(np.all(syntax_valid)):
+            tags.append("syntax_invalid_action")
+        if execution_valid is not None and not bool(np.all(execution_valid)):
+            tags.append("action_execution_error")
         if termination != "success":
             tags.append(termination)
         if factor_probe_available and not factor_change_steps:
@@ -251,6 +267,18 @@ def build_trajectory_diagnostics(
                 "tool_call_count": tool_call_count,
                 "valid_action_ratio": float(np.mean(valid)),
                 "invalid_step_ids": [int(step_ids[row]) for row, is_valid in zip(rows, valid) if not is_valid],
+                "syntax_validity_available": syntax_validity_available,
+                "syntax_invalid_step_ids": (
+                    [int(step_ids[row]) for row, is_valid in zip(rows, syntax_valid) if not is_valid]
+                    if syntax_valid is not None
+                    else []
+                ),
+                "execution_validity_available": execution_validity_available,
+                "execution_error_step_ids": (
+                    [int(step_ids[row]) for row, is_valid in zip(rows, execution_valid) if not is_valid]
+                    if execution_valid is not None
+                    else []
+                ),
                 "factor_probe_available": factor_probe_available,
                 "factor_change_step_ids": factor_change_steps,
                 "factor_decrease_step_ids": factor_decrease_steps,
@@ -289,6 +317,12 @@ def summarize_trajectory_diagnostics(
     # Preserve existing dashboards while common agentic comparisons migrate to
     # the estimator-independent namespace.
     result.update({f"exact_diag/{key}": value for key, value in common.items()})
+    if any(bool(item.get("syntax_validity_available")) for item in diagnostics):
+        syntax_invalid_steps = sum(len(item.get("syntax_invalid_step_ids", ())) for item in diagnostics)
+        result["agent_diag/syntax_invalid_step_rate"] = float(syntax_invalid_steps / max(total_steps, 1))
+    if any(bool(item.get("execution_validity_available")) for item in diagnostics):
+        execution_error_steps = sum(len(item.get("execution_error_step_ids", ())) for item in diagnostics)
+        result["agent_diag/execution_error_step_rate"] = float(execution_error_steps / max(total_steps, 1))
     if any(bool(item.get("factor_probe_available")) for item in diagnostics):
         exact_only = {
             "no_factor_progress_rate": float(np.mean(["no_factor_progress" in item for item in tags])),
@@ -650,6 +684,16 @@ def build_rollout_records(
                 "step_id": int(step_ids[row]),
                 "episode_return": float(rewards[row]),
                 "is_action_valid": bool(batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool))[row]),
+                "is_action_syntax_valid": (
+                    bool(batch.non_tensor_batch["is_action_syntax_valid"][row])
+                    if "is_action_syntax_valid" in batch.non_tensor_batch
+                    else None
+                ),
+                "is_action_execution_valid": (
+                    bool(batch.non_tensor_batch["is_action_execution_valid"][row])
+                    if "is_action_execution_valid" in batch.non_tensor_batch
+                    else None
+                ),
                 "credit_token_sum": float(batch.batch["advantages"][row].sum().item()),
                 "diagnostic_tags": diagnostics.get(trajectory_id, {}).get("diagnostic_tags", []),
                 "termination": diagnostics.get(trajectory_id, {}).get("termination", "unknown"),
