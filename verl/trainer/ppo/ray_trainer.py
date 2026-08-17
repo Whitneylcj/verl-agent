@@ -472,9 +472,14 @@ class RayPPOTrainer:
             from recipe.exact.core_exact import DelayedAlphaController
 
             environment_bucket = str(self.config.env.env_name).split("/")[0].lower()
+            bucket_names = (
+                ("appworld.selector", "appworld.arguments")
+                if environment_bucket == "appworld"
+                else (environment_bucket,)
+            )
             cv_config = self.config.algorithm.exact.cv
             self.exact_alpha_controller = DelayedAlphaController(
-                (environment_bucket,),
+                bucket_names,
                 ridge=cv_config.ridge,
                 max_abs_alpha=cv_config.max_abs_alpha,
             )

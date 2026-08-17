@@ -12,6 +12,7 @@ from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
+from recipe.exact.appworld_schema import UNKNOWN_RESOURCE
 from recipe.exact.credit_spec import CreditAtom, FactorSnapshot, SpanRoute
 
 
@@ -126,7 +127,12 @@ def build_conserved_atoms(
     for step_id, (before, after) in enumerate(zip(snapshots[:-1], snapshots[1:]), start=1):
         deltas = potential.factor_values(after) - potential.factor_values(before)
         for factor_id, value in zip(before.factor_ids, deltas.tolist()):
-            read_set = after.read_sets.get(factor_id, before.read_sets.get(factor_id, ()))
+            if factor_id in after.read_sets:
+                read_set = after.read_sets[factor_id]
+            elif factor_id in before.read_sets:
+                read_set = before.read_sets[factor_id]
+            else:
+                read_set = (UNKNOWN_RESOURCE,)
             atoms.append(
                 CreditAtom(
                     atom_id=f"factor:{step_id}:{factor_id}",
@@ -178,6 +184,7 @@ def temporal_routes(routes: Sequence[SpanRoute], atoms: Sequence[CreditAtom]) ->
                 span=route.span,
                 descendant_atom_ids=tuple(descendants),
                 soundness_certificate="temporal-future-cone",
+                route_kind="explicit",
             )
         )
     return tuple(result)

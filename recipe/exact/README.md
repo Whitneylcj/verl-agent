@@ -12,8 +12,13 @@ the update instead of silently falling back to a biased estimator.
 2. `build_conserved_atoms` constructs factor-potential deltas and one terminal
    residual whose pathwise sum is exactly the episode return.
 3. A prefix-predictable effect schema routes future atoms to response spans.
-   Current adapters conservatively retain all future factors because observation
-   history can mediate later policy actions. Unknown schemas use all-to-all.
+   Sokoban, ALFWorld, and WebShop conservatively retain all future factors
+   because observation history can mediate later policy actions. AppWorld uses
+   full Exact-G: its evaluator is compiled into per-test model read sets, its
+   strict one-call JSON action is split into selector and prefix-known argument
+   spans, and API possible writes are intersected with factor reads. Unknown
+   evaluator constructs, unsupported AppWorld versions, and invalid actions
+   widen routes instead of dropping causal edges.
 4. `compute_exact_advantage` writes span credit onto response tokens and masks
    data-parallel copy padding. `seq-mean-token-sum` makes the score of a span the
    sum of its token log probabilities.
@@ -188,7 +193,9 @@ episode length, KL/clip fraction, entropy, gradient norm, response clipping,
 throughput, and validation metrics. For EXACT also track
 `exact/conservation_error_max`, `exact/residual_ratio_mean`,
 `exact/cone_density_mean`, `exact/schema_fallback_rate`, credit quantiles,
-factor-progress rates, verifier snapshot cost, and active GPU-hours. Before
+factor-progress rates, verifier snapshot cost, and active GPU-hours. AppWorld
+also reports resource-graph span coverage, argument-span resolution, opaque
+factor-read rate, schema-version support, and evaluator-compile fallback. Before
 starting each rollout batch, the launcher
 reserves its worst-case usage and stops conservatively when the next batch could
 exceed the configured environment-step or generated-token budget.

@@ -322,6 +322,14 @@ class AgentRunObserver:
             warnings.append("high_residual_ratio")
         if float(metrics.get("exact/schema_fallback_rate", 0.0)) > 0:
             warnings.append("opaque_schema_fallback")
+        if float(metrics.get("exact/appworld_factor_opaque_rate", 0.0)) > 0:
+            warnings.append("partial_appworld_factor_graph")
+        if "exact/appworld_version_supported" in metrics and float(
+            metrics["exact/appworld_version_supported"]
+        ) < 1:
+            warnings.append("unsupported_appworld_graph_version")
+        if float(metrics.get("exact/appworld_factor_compile_fallback_rate", 0.0)) > 0:
+            warnings.append("appworld_factor_compile_failure")
         return warnings
 
     def _validated_metrics(

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any, Mapping, Sequence
 
@@ -196,6 +195,8 @@ def _appworld_requirement(entry: Any) -> str:
 
 
 def _appworld_test_outcomes(evaluation: Mapping[str, Any]) -> dict[str, float]:
+    from recipe.exact.appworld_schema import appworld_factor_id
+
     for container in (evaluation, *[value for value in evaluation.values() if isinstance(value, Mapping)]):
         if "passes" not in container or "failures" not in container:
             continue
@@ -209,8 +210,7 @@ def _appworld_test_outcomes(evaluation: Mapping[str, Any]) -> dict[str, float]:
                 requirement = _appworld_requirement(entry)
                 if not requirement:
                     raise ValueError("AppWorld evaluation contains an empty requirement")
-                digest = hashlib.sha256(requirement.encode("utf-8")).hexdigest()[:16]
-                factor_id = f"test:{digest}"
+                factor_id = appworld_factor_id(requirement)
                 if factor_id in requirements and requirements[factor_id] != requirement:
                     raise ValueError("AppWorld evaluation requirement hash collision")
                 if factor_id in outcomes:
@@ -225,6 +225,7 @@ def _appworld_test_outcomes(evaluation: Mapping[str, Any]) -> dict[str, float]:
 def appworld_factor_snapshot(
     evaluation: Any,
     expected_factor_ids: Sequence[str] | None = None,
+    read_sets: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Turn AppWorld's per-test evaluation booleans into a fixed factor vector."""
 
@@ -244,12 +245,28 @@ def appworld_factor_snapshot(
         raise ValueError(
             f"AppWorld evaluation schema changed; missing={sorted(missing)}, extra={sorted(extra)}"
         )
-    read_sets = {factor_id: (f"appworld.test:{factor_id}",) for factor_id in factor_ids}
+    if read_sets is None:
+        normalized_read_sets = {
+            factor_id: (f"appworld.test:{factor_id}",) for factor_id in factor_ids
+        }
+        schema_version = "exact.appworld.tests.v1"
+    else:
+        missing_read_sets = set(factor_ids) - set(read_sets)
+        extra_read_sets = set(read_sets) - set(factor_ids)
+        if missing_read_sets or extra_read_sets:
+            raise ValueError(
+                "AppWorld factor read-set schema mismatch; "
+                f"missing={sorted(missing_read_sets)}, extra={sorted(extra_read_sets)}"
+            )
+        normalized_read_sets = {
+            factor_id: tuple(read_sets[factor_id]) for factor_id in factor_ids
+        }
+        schema_version = "exact.appworld.tests.resource_graph.v2"
     return _snapshot(
         factor_ids,
         tuple(leaves[factor_id] for factor_id in factor_ids),
-        read_sets,
-        "exact.appworld.tests.v1",
+        normalized_read_sets,
+        schema_version,
     )
 
 

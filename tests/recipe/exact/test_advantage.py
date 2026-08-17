@@ -133,6 +133,65 @@ def test_missing_schema_uses_all_to_all_fallback():
     assert torch.all(data.batch["advantages"][:3][data.batch["response_mask"][:3].bool()] > 0)
 
 
+def test_resource_graph_schema_compiles_model_reads_into_token_spans():
+    data = _test_batch()
+    data.non_tensor_batch["exact_effect_schema"] = np.array(
+        [
+            {
+                "spans": [
+                    {
+                        "span_id": "selector",
+                        "token_start": 0,
+                        "token_end": 1,
+                        "route_kind": "resource_graph",
+                        "opaque": False,
+                        "possible_write_set": ("module:a",),
+                    },
+                    {
+                        "span_id": "arguments",
+                        "token_start": 1,
+                        "token_end": 2,
+                        "route_kind": "resource_graph",
+                        "opaque": False,
+                        "possible_write_set": ("module:b",),
+                        "control_parents": ("selector",),
+                    },
+                ]
+            },
+            {
+                "route_kind": "resource_graph",
+                "opaque": False,
+                "possible_write_set": ("module:b",),
+            },
+            {
+                "route_kind": "resource_graph",
+                "opaque": False,
+                "possible_write_set": ("module:b",),
+            },
+            {
+                "route_kind": "resource_graph",
+                "opaque": False,
+                "possible_write_set": ("module:a",),
+            },
+        ],
+        dtype=object,
+    )
+    data, metrics, traces = compute_exact_advantage(
+        data,
+        config={
+            "mode": "graph",
+            "force_residual_descendant": False,
+            "potential": {"weights": {"a_value": 1.0, "b_value": 2.0}},
+        },
+    )
+
+    torch.testing.assert_close(data.batch["advantages"][0], torch.tensor([6.0, 4.0, 0.0]))
+    assert metrics["exact/resource_graph_span_rate"] == 1.0
+    assert metrics["exact/unknown_factor_read_rate"] == 0.0
+    t1_spans = next(trace["spans"] for trace in traces if trace["trajectory_id"] == "t1")
+    assert len({span["span_id"] for span in t1_spans}) == len(t1_spans)
+
+
 def test_checkpoint_discontinuity_fails_closed():
     data = _test_batch()
     data.non_tensor_batch["exact_factor_pre"][1] = _snapshot(1, (0, 0))

@@ -66,6 +66,27 @@ def test_inspect_run_handles_initialized_but_empty_monitor(tmp_path):
     assert report["diagnoses"] == []
 
 
+def test_inspect_run_diagnoses_appworld_graph_fallbacks(tmp_path):
+    _append(
+        tmp_path / "metrics.jsonl",
+        {
+            "step": 1,
+            "metrics": {
+                "exact/appworld_factor_opaque_rate": 0.2,
+                "exact/appworld_version_supported": 0.0,
+                "exact/appworld_factor_compile_fallback_rate": 1.0,
+            },
+        },
+    )
+    report = build_run_report(tmp_path)
+    codes = {diagnosis["code"] for diagnosis in report["diagnoses"]}
+    assert {
+        "partial_appworld_factor_graph",
+        "unsupported_appworld_graph_version",
+        "appworld_factor_compile_failure",
+    } <= codes
+
+
 def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
     monitor = tmp_path / "monitor"
     monitor.mkdir()

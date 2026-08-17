@@ -122,6 +122,19 @@ class EnvironmentManagerBase:
         environment = str(self.config.env.env_name).split("/")[0].lower()
         return [conservative_future_schema(snapshot, environment) for snapshot in snapshots]
 
+    def resolve_exact_effect_schemas(
+        self,
+        schemas: List[Dict[str, Any]],
+        text_actions: List[str],
+        response_token_ids: Any,
+        response_mask: Any,
+        tokenizer: Any,
+    ) -> List[Dict[str, Any]]:
+        """Resolve post-generation prefix spans; default schemas are concrete."""
+
+        del text_actions, response_token_ids, response_mask, tokenizer
+        return schemas
+
     def build_text_obs(self,) -> List[str]:
         """
         This function builds the text observation for the agent.

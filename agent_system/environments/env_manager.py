@@ -561,6 +561,44 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
         dones = to_numpy(dones)
 
         return next_observations, rewards, dones, infos
+
+    def exact_credit_snapshots(self):
+        return self.envs.exact_credit_snapshots()
+
+    def exact_effect_schemas(self, snapshots):
+        schemas = self.envs.exact_effect_schemas()
+        if len(snapshots) != len(schemas):
+            raise ValueError("AppWorld snapshot/effect-schema batch size mismatch")
+        return schemas
+
+    def resolve_exact_effect_schemas(
+        self,
+        schemas,
+        text_actions,
+        response_token_ids,
+        response_mask,
+        tokenizer,
+    ):
+        from recipe.exact.appworld_schema import resolve_appworld_effect_schema
+
+        token_array = to_numpy(response_token_ids)
+        mask_array = to_numpy(response_mask).astype(bool)
+        if token_array.shape != mask_array.shape or token_array.shape[0] != len(schemas):
+            raise ValueError("AppWorld response tokens/mask/schema shapes do not align")
+        resolved = []
+        for index, registry in enumerate(schemas):
+            valid_positions = np.flatnonzero(mask_array[index])
+            if not np.array_equal(valid_positions, np.arange(len(valid_positions))):
+                raise ValueError("AppWorld valid response tokens must form a contiguous prefix")
+            resolved.append(
+                resolve_appworld_effect_schema(
+                    registry=registry,
+                    text_action=text_actions[index],
+                    response_token_ids=token_array[index, valid_positions].tolist(),
+                    tokenizer=tokenizer,
+                )
+            )
+        return resolved
     
 
     def build_text_obs(self, text_obs: List[str], init: bool = False) -> List[str]:
@@ -615,9 +653,6 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                     )
                 postprocess_text_obs.append(obs)
         return postprocess_text_obs
-
-    def exact_credit_snapshots(self):
-        return self.envs.exact_credit_snapshots()
 
 def make_envs(config):
     """

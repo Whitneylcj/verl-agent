@@ -118,8 +118,11 @@ class SpanRoute:
     span: EffectSpan
     descendant_atom_ids: tuple[str, ...] | None = None
     soundness_certificate: str | None = None
+    route_kind: str = "explicit"
 
     def __post_init__(self) -> None:
+        if self.route_kind not in {"explicit", "resource_graph"}:
+            raise ValueError(f"unsupported route kind: {self.route_kind}")
         if self.descendant_atom_ids is not None:
             object.__setattr__(
                 self,

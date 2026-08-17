@@ -16,6 +16,7 @@ from recipe.exact.core_exact import (
     compute_exact_credits,
 )
 from recipe.exact.credit_spec import EffectSpan, FactorSnapshot, SpanRoute
+from recipe.exact.resource_graph import compile_resource_graph_routes
 
 
 def _config_get(config: Any, key: str, default: Any = None) -> Any:
@@ -119,6 +120,19 @@ def _compile_row_routes(
     else:
         raise TypeError("exact_effect_schema must be a mapping")
 
+    base_span_ids = [
+        str(record.get("span_id", f"span:{span_position}"))
+        for span_position, record in enumerate(span_records)
+    ]
+    if len(base_span_ids) != len(set(base_span_ids)):
+        raise ValueError("effect span IDs must be unique within one response")
+    span_id_map = {
+        base_span_id: f"row:{row}:{base_span_id}" for base_span_id in base_span_ids
+    }
+    schema_resolution_fallback = bool(
+        isinstance(schema, Mapping) and schema.get("resolution_fallback", False)
+    )
+
     routes: list[SpanRoute] = []
     offsets: list[tuple[int, int]] = []
     coverage = np.zeros(valid_response_length, dtype=np.int64)
@@ -133,10 +147,18 @@ def _compile_row_routes(
                 f"invalid effect span [{start}, {end}) for response length {valid_response_length}"
             )
         coverage[start:end] += 1
-        opaque = bool(record.get("opaque", "descendant_factor_ids" not in record))
+        route_kind = str(record.get("route_kind", "explicit"))
+        opaque = bool(
+            record.get(
+                "opaque",
+                route_kind != "resource_graph" and "descendant_factor_ids" not in record,
+            )
+        )
         if opaque:
             descendant_ids = None
             fallback_count += 1
+        elif route_kind == "resource_graph":
+            descendant_ids = ()
         else:
             factor_ids = tuple(str(value) for value in record["descendant_factor_ids"])
             descendant_ids = tuple(
@@ -148,13 +170,16 @@ def _compile_row_routes(
                 and atom.factor_id in factor_ids
             )
         span = EffectSpan(
-            span_id=str(record.get("span_id", f"row:{row}:span:{span_position}")),
+            span_id=span_id_map[base_span_ids[span_position]],
             step_id=step_id,
             token_start=start,
             token_end=end,
             bucket=str(record.get("bucket", "default")),
             possible_write_set=tuple(record.get("possible_write_set", ())),
-            control_parents=tuple(record.get("control_parents", ())),
+            control_parents=tuple(
+                span_id_map.get(str(parent), str(parent))
+                for parent in record.get("control_parents", ())
+            ),
             context_sources=tuple(record.get("context_sources", ())),
             opaque=opaque,
         )
@@ -163,6 +188,7 @@ def _compile_row_routes(
                 span=span,
                 descendant_atom_ids=descendant_ids,
                 soundness_certificate=str(record.get("certificate", "opaque-all-to-all")),
+                route_kind=route_kind,
             )
         )
         offsets.append((start, end))
@@ -171,6 +197,8 @@ def _compile_row_routes(
         raise ValueError("EXACT cannot score an empty response")
     if not np.all(coverage == 1):
         raise ValueError("effect spans must partition every valid response token exactly once")
+    if schema_resolution_fallback and fallback_count == 0:
+        fallback_count += 1
     return routes, offsets, fallback_count
 
 
@@ -241,6 +269,13 @@ def compute_exact_advantage(
     factor_atom_count = 0
     changed_factor_atom_count = 0
     graph_compile_seconds = 0.0
+    resource_graph_span_count = 0
+    unknown_read_atom_count = 0
+    appworld_row_count = 0
+    appworld_argument_span_count = 0
+    appworld_opaque_factor_rates: list[float] = []
+    appworld_version_supported: list[float] = []
+    appworld_factor_compile_fallbacks: list[float] = []
 
     for trajectory_id, rows in trajectory_rows.items():
         snapshots = _trajectory_snapshots(rows, data)
@@ -255,11 +290,28 @@ def compute_exact_advantage(
         trajectory_factor_atoms = [atom for atom in conserved.atoms if not atom.is_residual]
         factor_atom_count += len(trajectory_factor_atoms)
         changed_factor_atom_count += sum(abs(atom.value) > 1e-12 for atom in trajectory_factor_atoms)
+        unknown_read_atom_count += sum(
+            "exact.resource.unknown" in atom.read_set for atom in trajectory_factor_atoms
+        )
 
         graph_started = time.perf_counter()
         routes: list[SpanRoute] = []
         placements: list[tuple[int, int, int]] = []
         for row in rows:
+            row_schema = data.non_tensor_batch["exact_effect_schema"][row]
+            if isinstance(row_schema, Mapping) and row_schema.get("kind") == "appworld-concrete-effect-v1":
+                appworld_row_count += 1
+                factor_count = int(row_schema.get("factor_count", 0))
+                opaque_factor_count = int(row_schema.get("opaque_factor_count", 0))
+                appworld_opaque_factor_rates.append(
+                    opaque_factor_count / max(factor_count, 1)
+                )
+                appworld_version_supported.append(
+                    float(bool(row_schema.get("version_supported", False)))
+                )
+                appworld_factor_compile_fallbacks.append(
+                    float(bool(row_schema.get("factor_schema_compile_fallback", False)))
+                )
             valid_length = int(base_response_mask[row].sum().item())
             row_routes, offsets, row_fallbacks = _compile_row_routes(
                 row=row,
@@ -269,10 +321,17 @@ def compute_exact_advantage(
                 atoms=conserved.atoms,
             )
             routes.extend(row_routes)
+            resource_graph_span_count += sum(
+                route.route_kind == "resource_graph" for route in row_routes
+            )
+            appworld_argument_span_count += sum(
+                route.span.bucket == "appworld.arguments" for route in row_routes
+            )
             placements.extend((row, start, end) for start, end in offsets)
             fallback_count += row_fallbacks
             span_count += len(row_routes)
 
+        routes = list(compile_resource_graph_routes(routes, conserved.atoms))
         result = compute_exact_credits(
             conserved,
             routes,
@@ -339,12 +398,31 @@ def compute_exact_advantage(
         "exact/padding_rows": float(exact_padding.sum()),
         "exact/trajectory_scale": float(trajectory_scale),
         "exact/factor_change_rate": float(changed_factor_atom_count / max(factor_atom_count, 1)),
+        "exact/resource_graph_span_rate": float(resource_graph_span_count / max(span_count, 1)),
+        "exact/unknown_factor_read_rate": float(unknown_read_atom_count / max(factor_atom_count, 1)),
         "exact/probe_seconds": probe_seconds,
         "exact/verifier_snapshot_count": probe_count,
         "exact/probe_seconds_per_snapshot": probe_seconds / probe_count if probe_count > 0 else 0.0,
         "exact/graph_compile_seconds": float(graph_compile_seconds),
         "exact/pathwise_conservation_pass": 1.0,
     }
+    if appworld_row_count:
+        metrics.update(
+            {
+                "exact/appworld_argument_span_rate": float(
+                    appworld_argument_span_count / appworld_row_count
+                ),
+                "exact/appworld_factor_opaque_rate": float(
+                    np.mean(appworld_opaque_factor_rates)
+                ),
+                "exact/appworld_version_supported": float(
+                    min(appworld_version_supported)
+                ),
+                "exact/appworld_factor_compile_fallback_rate": float(
+                    np.mean(appworld_factor_compile_fallbacks)
+                ),
+            }
+        )
     for quantile in (5, 25, 50, 75, 95):
         metrics[f"exact/credit_p{quantile:02d}"] = float(np.percentile(credit_array, quantile))
     for bucket, alpha in alpha_by_bucket.items():

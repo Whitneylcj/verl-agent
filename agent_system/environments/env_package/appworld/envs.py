@@ -19,6 +19,7 @@ import time
 import numpy as np
 import ray
 
+import appworld
 from appworld import AppWorld, load_task_ids
 
 
@@ -56,14 +57,70 @@ class AppWorldWorker:
         self.url = f"http://127.0.0.1:{port}"
         self._exact_factor_ids = None
         self._exact_snapshot = None
+        self._exact_read_sets = None
+        self._exact_effect_registry = None
+
+    def _build_exact_graph_schema(self, evaluation):
+        from appworld.common.inspect import get_name_to_model
+        from recipe.exact.appworld_schema import (
+            build_appworld_effect_registry,
+            compile_appworld_factor_reads,
+        )
+        from recipe.exact.env_probes import appworld_factor_snapshot
+
+        bootstrap_snapshot = appworld_factor_snapshot(evaluation)
+        factor_ids = tuple(bootstrap_snapshot["factor_ids"])
+        api_docs = self.env.task.api_docs
+        app_names = set(api_docs) | set(self.env.task.allowed_apps) | {"admin"}
+        app_to_model_names = {}
+        for app_name in sorted(app_names):
+            try:
+                app_to_model_names[app_name] = tuple(sorted(get_name_to_model(app_name)))
+            except (ImportError, ModuleNotFoundError):
+                app_to_model_names[app_name] = ()
+        registry = build_appworld_effect_registry(
+            api_docs=api_docs,
+            app_to_model_names=app_to_model_names,
+            appworld_version=str(appworld.__version__),
+        )
+        all_resources = tuple(registry["all_model_resources"])
+        compile_error = None
+        try:
+            ground_truth = self.env.task.ground_truth
+            if ground_truth is None or not ground_truth.evaluation_code:
+                raise ValueError("task ground truth exposes no evaluation code")
+            factor_reads = compile_appworld_factor_reads(
+                ground_truth.evaluation_code,
+                all_resources,
+            )
+            read_sets = {
+                factor_id: tuple(factor_reads.read_sets.get(factor_id, all_resources))
+                for factor_id in factor_ids
+            }
+            opaque_factor_ids = set(factor_reads.opaque_factor_ids) | (
+                set(factor_ids) - set(factor_reads.read_sets)
+            )
+        except (SyntaxError, TypeError, ValueError) as error:
+            read_sets = {factor_id: all_resources for factor_id in factor_ids}
+            opaque_factor_ids = set(factor_ids)
+            compile_error = f"{type(error).__name__}: {error}"
+        registry["factor_count"] = len(factor_ids)
+        registry["opaque_factor_count"] = len(opaque_factor_ids)
+        registry["factor_schema_compile_fallback"] = compile_error is not None
+        registry["factor_schema_compile_error"] = compile_error
+        self._exact_read_sets = read_sets
+        self._exact_effect_registry = registry
 
     def _evaluate_exact(self):
         from recipe.exact.env_probes import appworld_factor_snapshot
 
         evaluation = self.env.evaluate()
+        if self._exact_read_sets is None:
+            self._build_exact_graph_schema(evaluation)
         snapshot = appworld_factor_snapshot(
             evaluation,
             expected_factor_ids=self._exact_factor_ids,
+            read_sets=self._exact_read_sets,
         )
         if self._exact_factor_ids is None:
             self._exact_factor_ids = snapshot["factor_ids"]
@@ -77,6 +134,8 @@ class AppWorldWorker:
 
         self.current_step_count = 0
         self._exact_factor_ids = None
+        self._exact_read_sets = None
+        self._exact_effect_registry = None
 
         self.env = AppWorld(
             task_id=task_id,
@@ -127,6 +186,11 @@ class AppWorldWorker:
         if self._exact_snapshot is None:
             raise RuntimeError("AppWorld exact probe requested before reset")
         return self._exact_snapshot
+
+    def exact_effect_schema(self):
+        if self._exact_effect_registry is None:
+            raise RuntimeError("AppWorld exact effect schema requested before reset")
+        return self._exact_effect_registry
 
     def close(self):
         """Close the environment."""
@@ -251,6 +315,9 @@ class AppWorldEnvs:
 
     def exact_credit_snapshots(self):
         return ray.get([worker.exact_credit_snapshot.remote() for worker in self.workers])
+
+    def exact_effect_schemas(self):
+        return ray.get([worker.exact_effect_schema.remote() for worker in self.workers])
 
     def close(self):
         """Close all workers."""

@@ -22,6 +22,11 @@ DEFAULT_METRICS = (
     "exact/residual_ratio_mean",
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
+    "exact/resource_graph_span_rate",
+    "exact/appworld_argument_span_rate",
+    "exact/appworld_factor_opaque_rate",
+    "exact/appworld_version_supported",
+    "exact/appworld_factor_compile_fallback_rate",
     "exact/credit_std",
     "exact/probe_seconds_per_snapshot",
     "exact/graph_compile_seconds",
@@ -195,6 +200,39 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             (
                 "inspect environment effect-schema records",
                 "treat graph attribution as all-to-all until the schema is repaired",
+            ),
+        )
+    appworld_factor_opaque = latest("exact/appworld_factor_opaque_rate")
+    if appworld_factor_opaque is not None and appworld_factor_opaque > 0:
+        add(
+            "partial_appworld_factor_graph",
+            "medium",
+            {"exact/appworld_factor_opaque_rate": appworld_factor_opaque},
+            (
+                "inspect task evaluator constructs that forced an all-model read set",
+                "treat affected factors as conservative but not sparse",
+            ),
+        )
+    appworld_version_supported = latest("exact/appworld_version_supported")
+    if appworld_version_supported is not None and appworld_version_supported < 1:
+        add(
+            "unsupported_appworld_graph_version",
+            "high",
+            {"exact/appworld_version_supported": appworld_version_supported},
+            (
+                "verify the installed AppWorld source and data versions",
+                "retain the global-write fallback until the new source is audited",
+            ),
+        )
+    appworld_compile_fallback = latest("exact/appworld_factor_compile_fallback_rate")
+    if appworld_compile_fallback is not None and appworld_compile_fallback > 0:
+        add(
+            "appworld_factor_compile_failure",
+            "high",
+            {"exact/appworld_factor_compile_fallback_rate": appworld_compile_fallback},
+            (
+                "inspect evaluator parse errors in the rollout schema",
+                "do not interpret factor-level sparsity while all factors read all models",
             ),
         )
     residual_ratio = latest("exact/residual_ratio_mean")

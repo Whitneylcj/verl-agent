@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True)
+class ParsedAppWorldAction:
+    """Validated one-call action plus the first prefix-safe argument offset."""
+
+    app: str
+    api: str
+    arguments: dict[str, Any]
+    arguments_char_start: int | None
 
 
 def extract_tagged_payload(action: str, start_tag: str, end_tag: str) -> str:
@@ -26,8 +37,8 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def compile_json_api_action(action: str) -> str:
-    """Compile one tagged JSON object into a fixed-shape AppWorld API call."""
+def parse_json_api_action(action: str) -> ParsedAppWorldAction:
+    """Validate one tagged JSON action without executing or compiling it."""
 
     match = re.fullmatch(
         r"\s*<think>(.*?)</think>\s*<action>(.*?)</action>\s*",
@@ -50,6 +61,25 @@ def compile_json_api_action(action: str) -> str:
         raise ValueError("api must be a public Python identifier")
     if not isinstance(arguments, dict) or not all(isinstance(key, str) for key in arguments):
         raise ValueError("arguments must be a JSON object with string keys")
+    # The canonical root key is the first possible occurrence because app/api
+    # values are restricted identifiers. Escaped root keys remain valid JSON,
+    # but do not expose a trustworthy character boundary and therefore resolve
+    # to the conservative whole-response selector span.
+    payload_start = match.start(2)
+    arguments_key_start = match.group(2).find('"arguments"')
+    arguments_char_start = payload_start + arguments_key_start if arguments_key_start >= 0 else None
+    return ParsedAppWorldAction(
+        app=app_name,
+        api=api_name,
+        arguments=arguments,
+        arguments_char_start=arguments_char_start,
+    )
+
+
+def compile_json_api_action(action: str) -> str:
+    """Compile one tagged JSON object into a fixed-shape AppWorld API call."""
+
+    parsed = parse_json_api_action(action)
     # repr() turns JSON booleans/null into valid Python literals while all code
     # structure remains fixed by this adapter.
-    return f"print(apis.{app_name}.{api_name}(**{arguments!r}))"
+    return f"print(apis.{parsed.app}.{parsed.api}(**{parsed.arguments!r}))"

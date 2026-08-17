@@ -38,6 +38,11 @@ _COMPARISON_METRICS = (
     "exact/residual_ratio_mean",
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
+    "exact/resource_graph_span_rate",
+    "exact/appworld_argument_span_rate",
+    "exact/appworld_factor_opaque_rate",
+    "exact/appworld_version_supported",
+    "exact/appworld_factor_compile_fallback_rate",
     "exact/credit_std",
 )
 

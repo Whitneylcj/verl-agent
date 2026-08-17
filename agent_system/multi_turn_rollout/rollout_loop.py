@@ -385,7 +385,24 @@ class TrajectoryCollector:
 
             batch = batch.union(batch_output)
             
-            text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
+            text_actions = self.tokenizer.batch_decode(
+                batch.batch["responses"],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+
+            if use_exact:
+                response_length = batch.batch["responses"].shape[1]
+                response_mask = batch.batch.get("response_mask")
+                if response_mask is None:
+                    response_mask = batch.batch["attention_mask"][:, -response_length:]
+                exact_effect_schema = envs.resolve_exact_effect_schemas(
+                    schemas=exact_effect_schema,
+                    text_actions=text_actions,
+                    response_token_ids=batch.batch["responses"],
+                    response_mask=response_mask,
+                    tokenizer=self.tokenizer,
+                )
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
 
