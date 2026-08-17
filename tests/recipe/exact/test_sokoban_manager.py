@@ -34,3 +34,17 @@ def test_sokoban_manager_separates_syntax_from_noop_execution():
     assert bool(infos[1]["is_action_syntax_valid"])
     assert bool(infos[1]["is_action_execution_valid"])
     assert bool(infos[1]["is_action_valid"])
+
+
+def test_sokoban_manager_warns_against_repeating_unchanged_action():
+    envs = _FakeSokobanEnvs()
+    config = SimpleNamespace(env=SimpleNamespace(history_length=2))
+    manager = SokobanEnvironmentManager(envs, lambda actions: ([4], [1]), config)
+    manager.memory.reset(batch_size=1)
+    manager.memory.store({"text_obs": ["same board"], "action": ["Right"]})
+
+    prompts = manager.build_text_obs([{}], ["same board"])
+
+    assert "# Mandatory Loop Break" in prompts[0]
+    assert "previous right action left the board unchanged" in prompts[0]
+    assert "Do not choose right again this step" in prompts[0]

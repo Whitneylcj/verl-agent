@@ -26,3 +26,7 @@ def test_sokoban_prompts_explain_push_side_planning_and_loop_avoidance():
         assert "Push left needs the player at (r,c+1)" in template
         assert "push right needs the player at (r,c-1)" in template
         assert "execute that push now" in template
+
+
+def test_history_prompt_has_dynamic_loop_warning_slot():
+    assert "{loop_warning}" in SOKOBAN_TEMPLATE

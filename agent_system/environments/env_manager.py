@@ -341,16 +341,33 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
                 if self.is_multi_modal:
                     obs = SOKOBAN_VISUAL_TEMPLATE
                 else:
+                    loop_warning = self._loop_warning(i, text_obs[i])
                     obs = SOKOBAN_TEMPLATE.format(
                         step_count=len(self.memory[i]),
                         history_length=valid_lens[i],
                         action_history=memory_contexts[i],
                         current_step=len(self.memory[i]) + 1,
                         current_observation=text_obs[i],
+                        loop_warning=loop_warning,
                     )
             postprocess_text_obs.append(obs)
 
         return postprocess_text_obs
+
+    def _loop_warning(self, env_index: int, current_observation: Any) -> str:
+        if not self.memory[env_index]:
+            return ""
+        previous = self.memory[env_index][-1]
+        if not np.array_equal(np.asarray(previous["text_obs"]), np.asarray(current_observation)):
+            return ""
+        action = str(previous["action"]).strip().lower()
+        if action not in {"up", "down", "left", "right"}:
+            return ""
+        return (
+            "# Mandatory Loop Break\n"
+            f"The previous {action} action left the board unchanged. Do not choose {action} again this step; "
+            "choose another action that moves the player or makes a legal box push."
+        )
 
     def exact_credit_snapshots(self):
         return self.envs.exact_credit_snapshots()

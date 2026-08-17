@@ -91,6 +91,7 @@ If the player is already at the required cell, execute that push now. Otherwise 
 Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}
 You are now at step {current_step} and your current observation is:
 {current_observation}
+{loop_warning}
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
