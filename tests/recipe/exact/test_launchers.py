@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_EXACT = REPO_ROOT / "examples" / "exact_trainer" / "run_exact.sh"
 LAUNCH_MANAGED = REPO_ROOT / "examples" / "exact_trainer" / "launch_managed.sh"
