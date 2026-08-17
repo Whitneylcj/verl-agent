@@ -14,6 +14,7 @@ from recipe.exact.monitor import (
     summarize_appworld_validation_actions,
     summarize_trajectory_diagnostics,
     summarize_validation_action_validity,
+    summarize_validation_factor_progress,
 )
 
 
@@ -216,6 +217,39 @@ def test_validation_action_validity_keeps_syntax_and_execution_separate():
         "val/agent_diag/syntax_invalid_step_rate": 1 / 3,
         "val/agent_diag/execution_error_step_rate": 2 / 3,
     }
+
+
+def test_validation_factor_progress_reports_steps_and_trajectories():
+    metrics = summarize_validation_factor_progress(
+        [
+            np.array(
+                [_snapshot((0.0,)), _snapshot((0.0,)), _snapshot((1.0,))],
+                dtype=object,
+            )
+        ],
+        [
+            np.array(
+                [_snapshot((1.0,)), _snapshot((0.0,)), _snapshot((0.5,))],
+                dtype=object,
+            )
+        ],
+        ["trajectory-a", "trajectory-a", "trajectory-b"],
+    )
+
+    assert metrics == {
+        "val/exact/factor_change_step_rate": 2 / 3,
+        "val/exact/factor_change_trajectory_rate": 1.0,
+        "val/exact/factor_decrease_step_rate": 1 / 3,
+    }
+
+
+def test_validation_factor_progress_requires_aligned_rows():
+    with pytest.raises(ValueError, match="must align"):
+        summarize_validation_factor_progress(
+            [np.array([_snapshot((0.0,))], dtype=object)],
+            [np.array([_snapshot((1.0,))], dtype=object)],
+            [],
+        )
 
 
 def test_appworld_validation_actions_distinguish_docs_progress_and_early_completion():

@@ -738,6 +738,10 @@ class RayPPOTrainer:
             "is_action_syntax_valid": [],
             "is_action_execution_valid": [],
         }
+        validation_factor_snapshots = {
+            "exact_factor_pre": [],
+            "exact_factor_post": [],
+        }
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -823,6 +827,11 @@ class RayPPOTrainer:
                     validation_action_validity[validity_key].append(
                         test_output_gen_batch.non_tensor_batch[validity_key]
                     )
+            for snapshot_key in validation_factor_snapshots:
+                if snapshot_key in test_output_gen_batch.non_tensor_batch:
+                    validation_factor_snapshots[snapshot_key].append(
+                        test_output_gen_batch.non_tensor_batch[snapshot_key]
+                    )
             # success rate
             for k in test_batch.non_tensor_batch.keys():
                 if 'success_rate' in k:
@@ -895,9 +904,17 @@ class RayPPOTrainer:
         from recipe.exact.monitor import (
             summarize_appworld_validation_actions,
             summarize_validation_action_validity,
+            summarize_validation_factor_progress,
         )
 
         metric_dict.update(summarize_validation_action_validity(validation_action_validity))
+        metric_dict.update(
+            summarize_validation_factor_progress(
+                validation_factor_snapshots["exact_factor_pre"],
+                validation_factor_snapshots["exact_factor_post"],
+                traj_uids,
+            )
+        )
         if "appworld" in self.config.env.env_name.lower() and validation_action_validity["is_action_execution_valid"]:
             execution_valid = np.concatenate(validation_action_validity["is_action_execution_valid"], axis=0)
             metric_dict.update(

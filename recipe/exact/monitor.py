@@ -330,6 +330,46 @@ def summarize_validation_action_validity(
     return result
 
 
+def summarize_validation_factor_progress(
+    pre_chunks: Sequence[np.ndarray],
+    post_chunks: Sequence[np.ndarray],
+    trajectory_ids: Sequence[Any],
+) -> dict[str, float]:
+    """Summarize verifier-factor changes from aligned validation steps."""
+
+    if not pre_chunks and not post_chunks:
+        return {}
+    if not pre_chunks or not post_chunks:
+        raise ValueError("validation factor snapshots require both pre and post chunks")
+    before = np.concatenate([np.asarray(chunk, dtype=object).reshape(-1) for chunk in pre_chunks])
+    after = np.concatenate([np.asarray(chunk, dtype=object).reshape(-1) for chunk in post_chunks])
+    trajectory_ids = np.asarray(trajectory_ids, dtype=object).reshape(-1)
+    if not (len(before) == len(after) == len(trajectory_ids)):
+        raise ValueError("validation factor snapshots and trajectory IDs must align")
+
+    changed = []
+    decreased = []
+    for pre_snapshot, post_snapshot in zip(before, after):
+        pre_values = _snapshot_values(pre_snapshot)
+        post_values = _snapshot_values(post_snapshot)
+        if pre_values.shape != post_values.shape:
+            raise ValueError("validation factor snapshot shapes must remain stable")
+        delta = post_values - pre_values
+        changed.append(bool(np.any(np.abs(delta) > 1e-12)))
+        decreased.append(bool(np.any(delta < -1e-12)))
+
+    trajectory_changed = {
+        str(trajectory_id): False for trajectory_id in trajectory_ids
+    }
+    for trajectory_id, step_changed in zip(trajectory_ids, changed):
+        trajectory_changed[str(trajectory_id)] |= step_changed
+    return {
+        "val/exact/factor_change_step_rate": float(np.mean(changed)),
+        "val/exact/factor_change_trajectory_rate": float(np.mean(list(trajectory_changed.values()))),
+        "val/exact/factor_decrease_step_rate": float(np.mean(decreased)),
+    }
+
+
 def summarize_appworld_validation_actions(
     action_texts: Sequence[str],
     trajectory_ids: Sequence[Any],
