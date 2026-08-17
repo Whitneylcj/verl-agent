@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
 import re
+from typing import List
+
 
 def alfworld_projection(actions: List[str], action_pools: List[List[str]]):
     """
@@ -41,10 +42,11 @@ def alfworld_projection(actions: List[str], action_pools: List[List[str]]):
                 continue
 
             # Extract just the content between the tags
-            extracted_action = actions[i][start_idx + len(start_tag):end_idx].strip().lower()
-            
+            extracted_action = actions[i][start_idx + len(start_tag) : end_idx].strip().lower()
+
             actions[i] = extracted_action
-            valids[i] = 1
+            admissible_actions = {str(action).strip().lower() for action in action_pools[i]}
+            valids[i] = int(extracted_action in admissible_actions)
 
         except:
             actions[i] = actions[i][-30:]
