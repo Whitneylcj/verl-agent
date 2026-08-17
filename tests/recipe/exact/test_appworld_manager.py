@@ -14,9 +14,7 @@ class _FakeAppWorldEnvs:
 
     def step(self, actions):
         self.projected_actions = list(actions)
-        return ["document result"], [0.0], [False], [
-            {"won": False, "is_action_execution_valid": False}
-        ]
+        return ["document result"], [0.0], [False], [{"won": False, "is_action_execution_valid": False}]
 
 
 def test_appworld_execution_error_detector_uses_runtime_prefix():

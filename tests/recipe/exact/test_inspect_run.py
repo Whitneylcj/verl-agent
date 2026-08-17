@@ -122,9 +122,7 @@ def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
 def test_inspect_run_allows_recent_startup_without_heartbeat(tmp_path):
     monitor = tmp_path / "monitor"
     monitor.mkdir()
-    (tmp_path / "run_manifest.json").write_text(
-        json.dumps({"created_unix": 90.0, "experiment": {"name": "pilot"}})
-    )
+    (tmp_path / "run_manifest.json").write_text(json.dumps({"created_unix": 90.0, "experiment": {"name": "pilot"}}))
 
     report = build_run_report(
         tmp_path,

@@ -110,12 +110,7 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
     run_state = str(report.get("run_state", "unknown"))
     run_age = report.get("run_age_seconds")
     stale_after = report.get("stale_after_seconds")
-    startup_is_stale = (
-        run_state == "unknown"
-        or not isinstance(run_age, (int, float))
-        or not isinstance(stale_after, (int, float))
-        or run_age >= stale_after
-    )
+    startup_is_stale = run_state == "unknown" or not isinstance(run_age, (int, float)) or not isinstance(stale_after, (int, float)) or run_age >= stale_after
     if run_state in {"launched_no_heartbeat", "ray_configured_no_heartbeat", "unknown"} and startup_is_stale:
         add(
             "startup_incomplete",

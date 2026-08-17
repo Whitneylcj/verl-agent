@@ -177,16 +177,8 @@ def build_trajectory_diagnostics(
             batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool)),
             dtype=bool,
         )[rows]
-        syntax_valid = (
-            np.asarray(batch.non_tensor_batch["is_action_syntax_valid"], dtype=bool)[rows]
-            if syntax_validity_available
-            else None
-        )
-        execution_valid = (
-            np.asarray(batch.non_tensor_batch["is_action_execution_valid"], dtype=bool)[rows]
-            if execution_validity_available
-            else None
-        )
+        syntax_valid = np.asarray(batch.non_tensor_batch["is_action_syntax_valid"], dtype=bool)[rows] if syntax_validity_available else None
+        execution_valid = np.asarray(batch.non_tensor_batch["is_action_execution_valid"], dtype=bool)[rows] if execution_validity_available else None
         episode_length = int(float(batch.non_tensor_batch.get("episode_lengths", np.full(len(batch), len(rows)))[rows[-1]]))
         tool_call_count = float(batch.non_tensor_batch.get("tool_callings", np.zeros(len(batch)))[rows[-1]])
         done = bool(batch.non_tensor_batch.get("episode_done", np.zeros(len(batch), dtype=bool))[rows[-1]])
@@ -206,21 +198,9 @@ def build_trajectory_diagnostics(
                     factor_decrease_steps.append(step_id)
 
         response_signatures = [_valid_response_signature(batch, row) for row in rows]
-        repeated_response_steps = [
-            int(step_ids[rows[position]])
-            for position in range(1, len(rows))
-            if response_signatures[position] == response_signatures[position - 1]
-        ]
-        action_signatures = (
-            [_action_signature(_valid_response_text(tokenizer, batch, row)) for row in rows]
-            if tokenizer is not None
-            else []
-        )
-        action_loop_steps = (
-            _repeated_action_steps(action_signatures, rows, step_ids)
-            if action_signatures
-            else []
-        )
+        repeated_response_steps = [int(step_ids[rows[position]]) for position in range(1, len(rows)) if response_signatures[position] == response_signatures[position - 1]]
+        action_signatures = [_action_signature(_valid_response_text(tokenizer, batch, row)) for row in rows] if tokenizer is not None else []
+        action_loop_steps = _repeated_action_steps(action_signatures, rows, step_ids) if action_signatures else []
         repeated_action_steps = sorted(set(repeated_response_steps) | set(action_loop_steps))
         raw_outcomes = batch.non_tensor_batch.get(
             "trajectory_outcomes",
@@ -268,17 +248,9 @@ def build_trajectory_diagnostics(
                 "valid_action_ratio": float(np.mean(valid)),
                 "invalid_step_ids": [int(step_ids[row]) for row, is_valid in zip(rows, valid) if not is_valid],
                 "syntax_validity_available": syntax_validity_available,
-                "syntax_invalid_step_ids": (
-                    [int(step_ids[row]) for row, is_valid in zip(rows, syntax_valid) if not is_valid]
-                    if syntax_valid is not None
-                    else []
-                ),
+                "syntax_invalid_step_ids": ([int(step_ids[row]) for row, is_valid in zip(rows, syntax_valid) if not is_valid] if syntax_valid is not None else []),
                 "execution_validity_available": execution_validity_available,
-                "execution_error_step_ids": (
-                    [int(step_ids[row]) for row, is_valid in zip(rows, execution_valid) if not is_valid]
-                    if execution_valid is not None
-                    else []
-                ),
+                "execution_error_step_ids": ([int(step_ids[row]) for row, is_valid in zip(rows, execution_valid) if not is_valid] if execution_valid is not None else []),
                 "factor_probe_available": factor_probe_available,
                 "factor_change_step_ids": factor_change_steps,
                 "factor_decrease_step_ids": factor_decrease_steps,
@@ -684,16 +656,8 @@ def build_rollout_records(
                 "step_id": int(step_ids[row]),
                 "episode_return": float(rewards[row]),
                 "is_action_valid": bool(batch.non_tensor_batch.get("is_action_valid", np.ones(len(batch), dtype=bool))[row]),
-                "is_action_syntax_valid": (
-                    bool(batch.non_tensor_batch["is_action_syntax_valid"][row])
-                    if "is_action_syntax_valid" in batch.non_tensor_batch
-                    else None
-                ),
-                "is_action_execution_valid": (
-                    bool(batch.non_tensor_batch["is_action_execution_valid"][row])
-                    if "is_action_execution_valid" in batch.non_tensor_batch
-                    else None
-                ),
+                "is_action_syntax_valid": (bool(batch.non_tensor_batch["is_action_syntax_valid"][row]) if "is_action_syntax_valid" in batch.non_tensor_batch else None),
+                "is_action_execution_valid": (bool(batch.non_tensor_batch["is_action_execution_valid"][row]) if "is_action_execution_valid" in batch.non_tensor_batch else None),
                 "credit_token_sum": float(batch.batch["advantages"][row].sum().item()),
                 "diagnostic_tags": diagnostics.get(trajectory_id, {}).get("diagnostic_tags", []),
                 "termination": diagnostics.get(trajectory_id, {}).get("termination", "unknown"),
