@@ -273,6 +273,16 @@ algorithm:
       output_dir: outputs/exact/${trainer.experiment_name}
       residual_warning_ratio: 0.95
       rollout_sample_count: 8
+      # Persist useful rollout context without leaking AppWorld supervisor PII
+      # or accidentally copied credentials.
+      redact_text: True
+      max_text_chars: 20000
+      # Soft alerts only. Conservation and non-finite values remain hard stops.
+      ppo_kl_warning: 0.1
+      clipfrac_warning: 0.3
+      grad_norm_warning: 100.0
+      response_clip_warning_ratio: 0.1
+      invalid_step_warning_ratio: 0.2
   filter_groups: # DAPO from https://arxiv.org/abs/2503.14476
     enable: False
     max_num_gen_batches: 10

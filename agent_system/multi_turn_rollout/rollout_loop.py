@@ -277,6 +277,15 @@ class TrajectoryCollector:
                     # success_rate
                     for key, value in success_rate.items():
                         data[key] = value
+                    # Keep trajectory-aligned outcomes for diagnostics. Some
+                    # environment-specific aggregates (for example one
+                    # ALFWorld task subtype) are shorter than the full batch
+                    # and therefore cannot be attached to individual rows.
+                    data["trajectory_outcomes"] = {
+                        key: values[bs]
+                        for key, values in success.items()
+                        if len(values) == batch_size
+                    }
 
                     effective_batch.append(data)
             
@@ -408,6 +417,7 @@ class TrajectoryCollector:
                 batch.non_tensor_batch['is_action_valid'] = np.array([info['is_action_valid'] for info in infos], dtype=bool)
             else:
                 batch.non_tensor_batch['is_action_valid'] = np.ones(batch_size, dtype=bool)
+            batch.non_tensor_batch['episode_done'] = np.asarray(dones, dtype=bool)
 
             if 'tool_calling' in infos[0]:
                 tool_callings[active_masks] += np.array([info['tool_calling'] for info in infos], dtype=np.float32)[active_masks]

@@ -305,6 +305,12 @@ def compute_exact_advantage(
     data.batch["response_mask"] = exact_response_mask
     data.batch["advantages"] = advantages
     data.batch["returns"] = advantages.clone()
+    data.batch["exact_aux_loss_scale"] = torch.full(
+        (batch_size,),
+        float(trajectory_scale),
+        dtype=torch.float32,
+        device=advantages.device,
+    )
     loss_mask = data.batch.get("loss_mask", data.batch["attention_mask"].clone()).clone()
     loss_mask[:, -response_length:] = exact_response_mask.to(dtype=loss_mask.dtype)
     data.batch["loss_mask"] = loss_mask

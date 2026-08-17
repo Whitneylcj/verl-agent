@@ -1140,6 +1140,11 @@ class RayPPOTrainer:
                 output_dir=monitor_config.output_dir,
                 conservation_tolerance=self.config.algorithm.exact.conservation_tolerance,
                 residual_warning_ratio=monitor_config.residual_warning_ratio,
+                ppo_kl_warning=monitor_config.ppo_kl_warning,
+                clipfrac_warning=monitor_config.clipfrac_warning,
+                grad_norm_warning=monitor_config.grad_norm_warning,
+                response_clip_warning_ratio=monitor_config.response_clip_warning_ratio,
+                invalid_step_warning_ratio=monitor_config.invalid_step_warning_ratio,
                 initial_env_steps=self.cumulative_env_steps,
                 initial_generated_tokens=self.cumulative_generated_tokens,
                 initial_step=self.global_steps,
@@ -1395,18 +1400,35 @@ class RayPPOTrainer:
                                 for bucket, alpha in next_alpha.items():
                                     metrics[f"exact/cv_alpha_next/{bucket}"] = float(alpha)
                         if exact_observer is not None:
-                            from recipe.exact.monitor import build_rollout_records
+                            from recipe.exact.monitor import (
+                                build_rollout_records,
+                                build_trajectory_diagnostics,
+                                summarize_trajectory_diagnostics,
+                            )
+
+                            monitor_config = self.config.algorithm.exact.monitor
+                            trajectory_diagnostics = build_trajectory_diagnostics(
+                                batch,
+                                exact_traces,
+                                max_steps=self.config.env.max_steps,
+                                residual_warning_ratio=monitor_config.residual_warning_ratio,
+                            )
+                            metrics.update(summarize_trajectory_diagnostics(trajectory_diagnostics))
 
                             rollout_records = build_rollout_records(
                                 self.tokenizer,
                                 batch,
-                                max_records=self.config.algorithm.exact.monitor.rollout_sample_count,
+                                max_records=monitor_config.rollout_sample_count,
+                                trajectory_diagnostics=trajectory_diagnostics,
+                                redact_text=monitor_config.redact_text,
+                                max_text_chars=monitor_config.max_text_chars,
                             )
                             exact_step_warnings = exact_observer.observe_credit(
                                 step=self.global_steps,
                                 metrics=metrics,
                                 traces=exact_traces,
                                 rollout_records=rollout_records,
+                                trajectory_diagnostics=trajectory_diagnostics,
                             )
 
                     # update critic
@@ -1435,6 +1457,12 @@ class RayPPOTrainer:
                             print(batch.batch.keys())
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+                            if exact_observer is not None and self.config.algorithm.exact.monitor.redact_text:
+                                from recipe.exact.monitor import redact_rollout_text
+
+                                max_text_chars = self.config.algorithm.exact.monitor.max_text_chars
+                                inputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in inputs]
+                                outputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in outputs]
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
                             self._dump_generations(
                                 inputs=inputs,

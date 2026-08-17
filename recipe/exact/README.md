@@ -83,7 +83,15 @@ AppWorld or Python processes.
 - `metrics.jsonl`: framework and EXACT metrics per optimizer step;
 - `credit_traces.jsonl.gz`: atoms, routes, residuals, and span credits;
 - `rollout_samples.jsonl`: deterministic reward/validity/credit strata with
-  readable prompts and actions.
+  readable prompts and actions;
+- `trajectory_diagnostics.jsonl`: every trajectory indexed by invalid steps,
+  termination, factor progress, repeated actions, success, and credit health;
+- `alerts.jsonl`: only steps that cross configurable PPO KL, clip fraction,
+  gradient norm, response clipping, invalid-action, or EXACT warning thresholds.
+
+Persisted rollout text is size-bounded and redacts common credentials, email
+addresses, and phone numbers by default. Diagnostic tags are deterministic
+signals for investigation, not proof of a semantic root cause.
 
 Track `exact/conservation_error_max`, `exact/residual_ratio_mean`,
 `exact/cone_density_mean`, `exact/schema_fallback_rate`, credit quantiles,
@@ -91,3 +99,6 @@ episode success/reward/length, invalid actions, PPO KL/clip fraction, entropy,
 gradient norm, throughput, and GPU memory. Before starting each rollout batch,
 the launcher reserves its worst-case usage and stops conservatively when the
 next batch could exceed 10,000 environment steps or 1,000,000 generated tokens.
+The underlying verl `Tracking` interface supports console, W&B, TensorBoard,
+MLflow, SwanLab, VEMLP W&B, and ClearML; the default EXACT launcher uses console
+plus TensorBoard while retaining local JSONL artifacts for lossless diagnosis.

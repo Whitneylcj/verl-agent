@@ -1,7 +1,77 @@
 import gzip
 import json
 
-from recipe.exact.monitor import ExactObserver, ExactSafetyStop
+import numpy as np
+import torch
+
+from recipe.exact.monitor import (
+    ExactObserver,
+    ExactSafetyStop,
+    build_rollout_records,
+    build_trajectory_diagnostics,
+    redact_rollout_text,
+    summarize_trajectory_diagnostics,
+)
+
+
+class _Batch:
+    def __init__(self, tensors, non_tensors):
+        self.batch = tensors
+        self.non_tensor_batch = non_tensors
+
+    def __len__(self):
+        return len(self.batch["responses"])
+
+
+class _Tokenizer:
+    def decode(self, token_ids, skip_special_tokens=True):
+        del skip_special_tokens
+        return " ".join(str(int(value)) for value in token_ids)
+
+
+def _snapshot(values):
+    return {"factor_ids": ("progress",), "values": values}
+
+
+def _diagnostic_batch():
+    return _Batch(
+        {
+            "prompts": torch.tensor([[101, 102], [103, 104], [105, 106]]),
+            "responses": torch.tensor([[1, 2], [1, 2], [3, 0]]),
+            "response_mask": torch.tensor([[1, 1], [1, 1], [1, 0]]),
+            "advantages": torch.tensor([[1.0, 1.0], [0.5, 0.5], [-1.0, 0.0]]),
+        },
+        {
+            "traj_uid": np.array(["t1", "t1", "t2"], dtype=object),
+            "exact_padding": np.array([False, False, False]),
+            "exact_step_id": np.array([1, 2, 1]),
+            "episode_rewards": np.array([0.0, 0.0, 1.0]),
+            "episode_lengths": np.array([2, 2, 1]),
+            "tool_callings": np.array([2, 2, 1]),
+            "is_action_valid": np.array([True, False, True]),
+            "episode_done": np.array([False, False, True]),
+            "trajectory_outcomes": np.array(
+                [{"success_rate": 0.0}, {"success_rate": 0.0}, {"success_rate": 1.0}],
+                dtype=object,
+            ),
+            "exact_factor_pre": np.array(
+                [_snapshot((0.0,)), _snapshot((0.0,)), _snapshot((0.0,))],
+                dtype=object,
+            ),
+            "exact_factor_post": np.array(
+                [_snapshot((0.0,)), _snapshot((0.0,)), _snapshot((1.0,))],
+                dtype=object,
+            ),
+            "exact_effect_schema": np.array(
+                [
+                    {"opaque": False, "descendant_factor_ids": ("progress",)},
+                    {"opaque": False, "descendant_factor_ids": ("progress",)},
+                    {"opaque": False, "descendant_factor_ids": ("progress",)},
+                ],
+                dtype=object,
+            ),
+        },
+    )
 
 
 def _metrics(conservation=0.0):
@@ -75,3 +145,52 @@ def test_observer_safety_stops_on_nonfinite_metric(tmp_path):
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
     assert heartbeat["status"] == "safety_stopped"
     assert heartbeat["step"] == 7
+
+
+def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
+    batch = _diagnostic_batch()
+    traces = [
+        {"trajectory_id": "t1", "residual_ratio": 0.99},
+        {"trajectory_id": "t2", "residual_ratio": 0.1},
+    ]
+    diagnostics = build_trajectory_diagnostics(batch, traces, max_steps=2)
+    by_id = {item["trajectory_id"]: item for item in diagnostics}
+    assert by_id["t1"]["termination"] == "max_steps"
+    assert set(by_id["t1"]["diagnostic_tags"]) >= {
+        "invalid_action",
+        "max_steps",
+        "no_factor_progress",
+        "repeated_action",
+        "high_residual_ratio",
+    }
+    assert by_id["t2"]["termination"] == "success"
+
+    metrics = summarize_trajectory_diagnostics(diagnostics)
+    assert metrics["exact_diag/success_rate"] == 0.5
+    assert metrics["exact_diag/invalid_step_rate"] == 1 / 3
+
+    records = build_rollout_records(
+        _Tokenizer(),
+        batch,
+        trajectory_diagnostics=diagnostics,
+    )
+    record_by_id = {item["trajectory_id"]: item for item in records}
+    assert record_by_id["t1"]["step_id"] == 2
+    assert "invalid_action" in record_by_id["t1"]["diagnostic_tags"]
+
+
+def test_rollout_redaction_bounds_text_and_removes_common_secrets():
+    raw = "email jane@example.com phone +1 (555) 123-4567 password=abc123 " + "x" * 200
+    redacted = redact_rollout_text(raw, max_chars=100)
+    assert "jane@example.com" not in redacted
+    assert "555" not in redacted
+    assert "abc123" not in redacted
+    assert "[TRUNCATED]" in redacted
+
+
+def test_observer_emits_soft_alerts_after_optimizer_metrics(tmp_path):
+    observer = ExactObserver(tmp_path, ppo_kl_warning=0.1)
+    observer.complete_step(1, {**_metrics(), "actor/ppo_kl": 0.2}, [])
+
+    alert = json.loads((tmp_path / "alerts.jsonl").read_text().splitlines()[0])
+    assert "high_ppo_kl" in alert["warnings"]

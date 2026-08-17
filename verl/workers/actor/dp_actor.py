@@ -322,6 +322,8 @@ class DataParallelPPOActor(BasePPOActor):
         multi_turn = data.meta_info.get("multi_turn", False)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
+        if "exact_aux_loss_scale" in data.batch:
+            select_keys.append("exact_aux_loss_scale")
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
@@ -373,6 +375,16 @@ class DataParallelPPOActor(BasePPOActor):
 
                     old_log_prob = data["old_log_probs"]
                     advantages = data["advantages"]
+                    exact_aux_loss_scale = data.get("exact_aux_loss_scale")
+                    if exact_aux_loss_scale is None:
+                        aux_loss_scale = 1.0
+                    else:
+                        if not torch.allclose(
+                            exact_aux_loss_scale,
+                            exact_aux_loss_scale.reshape(-1)[0].expand_as(exact_aux_loss_scale),
+                        ):
+                            raise ValueError("EXACT auxiliary loss scale must be constant within a micro-batch")
+                        aux_loss_scale = exact_aux_loss_scale.reshape(-1)[0]
 
                     clip_ratio = self.config.clip_ratio
                     clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -409,6 +421,7 @@ class DataParallelPPOActor(BasePPOActor):
 
                     if entropy_coeff != 0:
                         entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                        entropy_loss = entropy_loss * aux_loss_scale
 
                         # compute policy loss
                         policy_loss = pg_loss - entropy_loss * entropy_coeff
@@ -420,10 +433,13 @@ class DataParallelPPOActor(BasePPOActor):
                         # compute kl loss
                         kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
                         kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+                        kl_loss = kl_loss * aux_loss_scale
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
+                        if exact_aux_loss_scale is not None:
+                            metrics["actor/exact_aux_loss_scale"] = aux_loss_scale.detach().item()
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
