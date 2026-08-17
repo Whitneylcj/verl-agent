@@ -13,18 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
+import time
+import uuid
+from typing import Dict, List
+
 import numpy as np
+import torch
+from transformers import PreTrainedTokenizer
+
+import verl.utils.torch_functional as verl_F
+from agent_system.environments import EnvironmentManagerBase
+from agent_system.multi_turn_rollout.utils import filter_group_data, process_image, to_list_of_dict, torch_to_numpy
 from verl import DataProto
+from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
-import verl.utils.torch_functional as verl_F
-from transformers import PreTrainedTokenizer
-import uuid
-from agent_system.multi_turn_rollout.utils import process_image, to_list_of_dict, torch_to_numpy, filter_group_data
-from agent_system.environments import EnvironmentManagerBase
-from typing import List, Dict
-from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
+
 
 class TrajectoryCollector:
     def __init__(self, config, tokenizer: PreTrainedTokenizer, processor=None):
@@ -84,7 +88,7 @@ class TrajectoryCollector:
         if obs_text is not None:
             obs_content += obs_text
         else:
-            print(f"Warning: No text observation found!")
+            print("Warning: No text observation found!")
 
         
         chat = np.array([{
@@ -328,9 +332,20 @@ class TrajectoryCollector:
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
+        use_exact = str(self.config.algorithm.adv_estimator).lower().split(".")[-1] == "exact"
         # Trajectory collection loop
         for _step in range(self.config.env.max_steps):
             active_masks = np.logical_not(is_done)
+
+            if use_exact:
+                exact_probe_started = time.perf_counter()
+                exact_factor_pre = envs.exact_credit_snapshots()
+                if len(exact_factor_pre) != batch_size:
+                    raise ValueError("EXACT pre-action probe batch size does not match rollout batch")
+                exact_effect_schema = envs.exact_effect_schemas(exact_factor_pre)
+                if len(exact_effect_schema) != batch_size:
+                    raise ValueError("EXACT effect schema batch size does not match rollout batch")
+                exact_pre_probe_seconds = time.perf_counter() - exact_probe_started
 
             batch = self.preprocess_batch(gen_batch=gen_batch, obs=obs)
 
@@ -363,6 +378,24 @@ class TrajectoryCollector:
             text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
             
             next_obs, rewards, dones, infos = envs.step(text_actions)
+
+            if use_exact:
+                exact_post_probe_started = time.perf_counter()
+                exact_factor_post = envs.exact_credit_snapshots()
+                if len(exact_factor_post) != batch_size:
+                    raise ValueError("EXACT post-action probe batch size does not match rollout batch")
+                batch.non_tensor_batch["exact_step_id"] = np.full(batch_size, _step + 1, dtype=np.int64)
+                batch.non_tensor_batch["exact_factor_pre"] = np.asarray(exact_factor_pre, dtype=object)
+                batch.non_tensor_batch["exact_factor_post"] = np.asarray(exact_factor_post, dtype=object)
+                batch.non_tensor_batch["exact_effect_schema"] = np.asarray(exact_effect_schema, dtype=object)
+                exact_probe_seconds = exact_pre_probe_seconds + (
+                    time.perf_counter() - exact_post_probe_started
+                )
+                batch.non_tensor_batch["exact_probe_seconds"] = np.full(
+                    batch_size,
+                    exact_probe_seconds / batch_size,
+                    dtype=np.float64,
+                )
 
             
             if len(rewards.shape) == 2:

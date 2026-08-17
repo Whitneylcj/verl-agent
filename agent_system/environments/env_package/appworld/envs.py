@@ -14,11 +14,13 @@
 # limitations under the License.
 
 import os
-import numpy as np
-import ray
 import time
 
+import numpy as np
+import ray
+
 from appworld import AppWorld, load_task_ids
+
 
 def load_available_ports(port_file="appworld_ports.ports"):
     """
@@ -28,7 +30,7 @@ def load_available_ports(port_file="appworld_ports.ports"):
         raise FileNotFoundError(f"Port file {port_file} does not exist. Please run the service startup script first.")
     
     ports = []
-    with open(port_file, 'r') as f:
+    with open(port_file) as f:
         for line in f:
             line = line.strip()
             if line and line.isdigit():
@@ -51,6 +53,20 @@ class AppWorldWorker:
         self.worker_id = worker_id
         
         self.url = f"http://0.0.0.0:{port}"
+        self._exact_factor_ids = None
+        self._exact_snapshot = None
+
+    def _evaluate_exact(self):
+        from recipe.exact.env_probes import appworld_factor_snapshot
+
+        evaluation = self.env.evaluate()
+        snapshot = appworld_factor_snapshot(
+            evaluation,
+            expected_factor_ids=self._exact_factor_ids,
+        )
+        if self._exact_factor_ids is None:
+            self._exact_factor_ids = snapshot["factor_ids"]
+        return evaluation, snapshot
 
     def reset(self, task_id):
         """Reset the environment with a new task."""
@@ -59,12 +75,21 @@ class AppWorldWorker:
             time.sleep(2)
 
         self.current_step_count = 0
+        self._exact_factor_ids = None
 
         self.env = AppWorld(
             task_id=task_id,
             experiment_name=f'default_{self.worker_id}',
             remote_environment_url=self.url,
         )
+
+        completion_before_probe = self.env.task_completed()
+        _, first_snapshot = self._evaluate_exact()
+        _, second_snapshot = self._evaluate_exact()
+        completion_after_probe = self.env.task_completed()
+        if first_snapshot != second_snapshot or completion_before_probe != completion_after_probe:
+            raise RuntimeError("AppWorld evaluate() is not side-effect-free on this task")
+        self._exact_snapshot = first_snapshot
 
         obs = self.env.task.instruction
         info = {
@@ -82,10 +107,12 @@ class AppWorldWorker:
 
         obs = self.env.execute(action)
 
+        evaluation, self._exact_snapshot = self._evaluate_exact()
+
         done = self.env.task_completed() or (self.current_step_count >= self.max_interactions)
 
         if done:
-            is_success = self.env.evaluate().success
+            is_success = evaluation.success
 
             reward = 10.0 if is_success else 0.0
             info = {"won": is_success, "step_count": self.current_step_count}
@@ -94,6 +121,11 @@ class AppWorldWorker:
             info = {"won": False, "step_count": self.current_step_count}
 
         return obs, reward, done, info
+
+    def exact_credit_snapshot(self):
+        if self._exact_snapshot is None:
+            raise RuntimeError("AppWorld exact probe requested before reset")
+        return self._exact_snapshot
 
     def close(self):
         """Close the environment."""
@@ -216,6 +248,9 @@ class AppWorldEnvs:
 
         return obs_list, info_list
 
+    def exact_credit_snapshots(self):
+        return ray.get([worker.exact_credit_snapshot.remote() for worker in self.workers])
+
     def close(self):
         """Close all workers."""
         # Send close commands to all workers
@@ -241,8 +276,11 @@ def build_appworld_envs(dataset_name="train",
                         env_num=1, 
                         group_n=1,
                         start_server_id=0,
-                        resources_per_worker={"num_cpus": 0.1},
+                        resources_per_worker=None,
                         ):
+
+    if resources_per_worker is None:
+        resources_per_worker = {"num_cpus": 0.1}
 
     return AppWorldEnvs(
         dataset_name=dataset_name,

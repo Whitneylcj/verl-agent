@@ -13,12 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, Dict, Union, Any
-import torch
-import numpy as np
 import os
-from agent_system.environments.prompts import *
 from collections import defaultdict
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
+import torch
+
+from agent_system.environments.prompts import *
+
 
 def to_numpy(data):
     if isinstance(data, torch.Tensor):
@@ -95,6 +98,29 @@ class EnvironmentManagerBase:
         dones = to_numpy(dones)
         
         return next_observations, rewards, dones, infos
+
+    def exact_credit_snapshots(self) -> List[Dict[str, Any]]:
+        """Return side-effect-free verifier factors for every live sub-environment.
+
+        EXACT calls this before action generation and immediately after the
+        environment step. Managers must override this method and keep the factor
+        schema fixed for the whole trajectory.
+        """
+
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide an EXACT credit probe"
+        )
+
+    def exact_effect_schemas(
+        self,
+        snapshots: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build prefix-predictable conservative routes from pre-action state."""
+
+        from recipe.exact.env_probes import conservative_future_schema
+
+        environment = str(self.config.env.env_name).split("/")[0].lower()
+        return [conservative_future_schema(snapshot, environment) for snapshot in snapshots]
 
     def build_text_obs(self,) -> List[str]:
         """

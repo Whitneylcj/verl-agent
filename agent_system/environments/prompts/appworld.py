@@ -13,7 +13,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# ruff: noqa: E501 - legacy prompt literals intentionally preserve upstream wording.
+
 # --------------------- Appworld --------------------- #
+APPWORLD_JSON_API_TEMPLATE_NO_HIS = """
+You are an autonomous AppWorld assistant. Complete the supervisor's task by
+making exactly one documented API call per turn. First inspect API docs, then
+call task APIs, and finally call supervisor.complete_task.
+
+Supervisor: {supervisor_first_name} {supervisor_last_name}
+Email: {supervisor_email}
+Phone: {supervisor_phone_number}
+Task: {task_description}
+
+Return exactly:
+<think>brief reasoning about the next single API call</think>
+<action>{{"app":"api_docs","api":"show_app_descriptions","arguments":{{}}}}</action>
+
+The action must be valid JSON with exactly `app`, `api`, and `arguments`.
+Never emit Python code. Use literal JSON arguments based on prior results.
+"""
+
+
+APPWORLD_JSON_API_TEMPLATE = """
+You are an autonomous AppWorld assistant. Complete the task using exactly one
+documented API call per turn.
+
+Supervisor: {supervisor_first_name} {supervisor_last_name}
+Email: {supervisor_email}
+Phone: {supervisor_phone_number}
+Task: {task_description}
+
+Recent interaction history ({history_length} of {step_count} prior calls):
+{action_history}
+
+Current result:
+{current_observation}
+
+Return exactly one JSON API action:
+<think>brief reasoning</think>
+<action>{{"app":"app_name","api":"api_name","arguments":{{"name":"literal value"}}}}</action>
+
+The JSON object must contain exactly `app`, `api`, and `arguments`. Never emit
+Python code. Call supervisor.complete_task when the task is finished.
+"""
+
+
 APPWORLD_TEMPLATE_NO_HIS = """
 I am your supervisor and you are a super intelligent AI Assistant whose job is to achieve my day-to-day tasks completely autonomously.
 

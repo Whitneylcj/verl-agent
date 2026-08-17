@@ -13,14 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
-import yaml
+
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
+import ray
 import torch
 import torchvision.transforms as T
-import ray
+import yaml
 
 from agent_system.environments.env_package.alfworld.alfworld.agents.environment import get_environment
 
@@ -61,6 +62,22 @@ class AlfworldWorker:
     def __init__(self, config, seed, base_env):
         self.env = base_env.init_env(batch_size=1)  # Each worker holds only one sub-environment
         self.env.seed(seed)
+        self._exact_info = {"won": False}
+        self._exact_task_params = None
+        self._exact_snapshot = None
+
+    def _refresh_exact_snapshot(self):
+        from recipe.exact.env_probes import alfworld_factor_snapshot
+
+        snapshot = alfworld_factor_snapshot(self._exact_info, self._exact_task_params)
+        if self._exact_snapshot is not None:
+            if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
+                raise RuntimeError("ALFWorld factor schema changed within a trajectory")
+            snapshot["values"] = tuple(
+                max(previous, current)
+                for previous, current in zip(self._exact_snapshot["values"], snapshot["values"])
+            )
+        self._exact_snapshot = snapshot
     
     def step(self, action):
         """Execute a step in the environment"""
@@ -68,12 +85,33 @@ class AlfworldWorker:
         
         obs, scores, dones, infos = self.env.step(actions)
         infos['observation_text'] = obs
+        self._exact_info = {
+            key: value[0] if isinstance(value, (list, tuple, np.ndarray)) else value
+            for key, value in infos.items()
+        }
+        self._refresh_exact_snapshot()
         return obs, scores, dones, infos
     
     def reset(self):
         """Reset the environment"""
         obs, infos = self.env.reset()
         infos['observation_text'] = obs
+        self._exact_info = {
+            key: value[0] if isinstance(value, (list, tuple, np.ndarray)) else value
+            for key, value in infos.items()
+        }
+        gamefile = self._exact_info.get("extra.gamefile")
+        self._exact_task_params = None
+        self._exact_snapshot = None
+        if gamefile:
+            trajectory_path = os.path.join(os.path.dirname(gamefile), "traj_data.json")
+            with open(trajectory_path, encoding="utf-8") as handle:
+                trajectory = json.load(handle)
+            self._exact_task_params = {
+                **trajectory["pddl_params"],
+                "task_type": trajectory["task_type"],
+            }
+        self._refresh_exact_snapshot()
         return obs, infos
     
     def getobs(self):
@@ -82,14 +120,20 @@ class AlfworldWorker:
         image = image.cpu()  
         return image
 
+    def exact_credit_snapshot(self):
+        if self._exact_snapshot is None:
+            raise RuntimeError("ALFWorld exact probe requested before reset")
+        return self._exact_snapshot
+
 class AlfworldEnvs(gym.Env):
-    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
+    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs=None):
         super().__init__()
         
         # Initialize Ray if not already initialized
         if not ray.is_initialized():
             ray.init()
             
+        env_kwargs = env_kwargs or {}
         eval_dataset = env_kwargs.get('eval_dataset', 'eval_in_distribution')
         config = load_config_file(alf_config_path)
         env_type = config['env']['type']
@@ -186,6 +230,9 @@ class AlfworldEnvs(gym.Env):
         images = ray.get(futures)
         return images
 
+    def exact_credit_snapshots(self):
+        return ray.get([worker.exact_credit_snapshot.remote() for worker in self.workers])
+
     @property
     def get_admissible_commands(self):
         """
@@ -202,5 +249,5 @@ class AlfworldEnvs(gym.Env):
         for worker in self.workers:
             ray.kill(worker)
 
-def build_alfworld_envs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
+def build_alfworld_envs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs=None):
     return AlfworldEnvs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train, env_kwargs)

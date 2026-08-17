@@ -13,10 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ray
 import gym
-from agent_system.environments.env_package.sokoban.sokoban import SokobanEnv
 import numpy as np
+import ray
+
+from agent_system.environments.env_package.sokoban.sokoban import SokobanEnv
+
 
 class SokobanWorker:
     """
@@ -43,6 +45,11 @@ class SokobanWorker:
         rendered = self.env.render(mode=mode_for_render)
         return rendered
 
+    def exact_credit_snapshot(self):
+        from recipe.exact.env_probes import sokoban_factor_snapshot
+
+        return sokoban_factor_snapshot(self.env.room_fixed, self.env.room_state)
+
 
 class SokobanMultiProcessEnv(gym.Env):
     """
@@ -56,7 +63,7 @@ class SokobanMultiProcessEnv(gym.Env):
                  env_num=1, 
                  group_n=1, 
                  mode='rgb_array',
-                 resources_per_worker={"num_cpus": 0.1},
+                 resources_per_worker=None,
                  is_train=True,
                  env_kwargs=None):
         """
@@ -80,6 +87,8 @@ class SokobanMultiProcessEnv(gym.Env):
 
         if env_kwargs is None:
             env_kwargs = {}
+        if resources_per_worker is None:
+            resources_per_worker = {"num_cpus": 0.1}
 
         # Create Ray remote actors instead of processes
         env_worker = ray.remote(**resources_per_worker)(SokobanWorker)
@@ -162,6 +171,9 @@ class SokobanMultiProcessEnv(gym.Env):
             results = ray.get(futures)
             return results
 
+    def exact_credit_snapshots(self):
+        return ray.get([worker.exact_credit_snapshot.remote() for worker in self.workers])
+
     def close(self):
         """
         Close all Ray actors
@@ -179,7 +191,7 @@ def build_sokoban_envs(
         env_num=1,
         group_n=1,
         mode='rgb_array',
-        resources_per_worker={"num_cpus": 0.1},
+        resources_per_worker=None,
         is_train=True,
         env_kwargs=None):
     return SokobanMultiProcessEnv(seed, env_num, group_n, mode, resources_per_worker, is_train, env_kwargs=env_kwargs)

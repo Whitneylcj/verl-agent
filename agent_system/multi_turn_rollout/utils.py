@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-import numpy as np
-import random
-from typing import List, Tuple, Dict
 import math
+from typing import Dict, List
+
+import numpy as np
+import torch
 from PIL import Image
+
 from verl import DataProto
+
 
 def to_list_of_dict(batch: DataProto) -> list[dict]:
     tensors = batch.batch
@@ -84,6 +86,13 @@ def process_image(image, max_pixels: int = 2048 * 2048, min_pixels: int = 256 * 
 
 
 def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
+    is_exact = str(config.algorithm.adv_estimator).lower().split(".")[-1] == "exact"
+    data.non_tensor_batch["rollout_padding"] = np.zeros(len(data), dtype=bool)
+    if is_exact:
+        if mode != "copy":
+            raise ValueError("EXACT only supports zero-loss copy padding; deleting rollout rows is biased")
+        data.non_tensor_batch["exact_padding"] = np.zeros(len(data), dtype=bool)
+
     world_size = config.trainer.n_gpus_per_node * config.trainer.nnodes
     size_divisor_rollout = config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu * world_size
     if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
@@ -94,7 +103,12 @@ def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
         size_divisor_actor = config.actor_rollout_ref.actor.ppo_mini_batch_size
     else:
         size_divisor_actor = config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu * world_size
-    size_divisor = np.lcm.reduce(np.array([size_divisor_ref, size_divisor_rollout, size_divisor_actor])).item()
+    divisors = [size_divisor_ref, size_divisor_rollout, size_divisor_actor]
+    if is_exact:
+        # Keep every optimizer mini-batch full; otherwise the actor's fixed
+        # gradient-accumulation divisor would underweight the final partial one.
+        divisors.append(config.actor_rollout_ref.actor.ppo_mini_batch_size)
+    size_divisor = np.lcm.reduce(np.array(divisors)).item()
 
     # check if the batch size is divisible by the dp size, if not, delete the last few samples to make it divisible
     bs = len(data)
@@ -120,8 +134,12 @@ def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
         del data
     elif mode == "copy":
         to_add = size_divisor - remainder
-        dup_indices = np.random.choice(bs, to_add, replace=False)
+        dup_indices = np.random.choice(bs, to_add, replace=to_add > bs)
         dup_proto = data.select_idxs(dup_indices)
+        dup_proto.non_tensor_batch["rollout_padding"] = np.ones(to_add, dtype=bool)
+
+        if is_exact:
+            dup_proto.non_tensor_batch["exact_padding"] = np.ones(to_add, dtype=bool)
 
         adjusted_batch = DataProto.concat([data, dup_proto])
     else:
@@ -182,4 +200,3 @@ def filter_group_data(batch_list : List[Dict],
     tool_callings = tool_callings[keep_indices]
 
     return batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings
-

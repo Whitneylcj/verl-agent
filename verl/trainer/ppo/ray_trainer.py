@@ -20,8 +20,6 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
-import uuid
-from collections import defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -38,8 +36,9 @@ from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
+from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
+from gigpo import core_gigpo
 from verl import DataProto
-from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
 from verl.single_controller.ray.base import create_colocated_worker_cls
@@ -49,7 +48,6 @@ from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
     compute_throughout_metrics,
     compute_timing_metrics,
-    process_validation_metrics,
 )
 from verl.trainer.ppo.reward import compute_reward, compute_reward_async
 from verl.utils.checkpoint.checkpoint_manager import find_latest_ckpt_path
@@ -60,9 +58,6 @@ from verl.utils.seqlen_balancing import get_seqlen_balanced_partitions, log_seql
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 from verl.workers.rollout.async_server import AsyncLLMServerManager
-from gigpo import core_gigpo
-
-from agent_system.multi_turn_rollout import TrajectoryCollector, adjust_batch
 
 WorkerType = Type[Worker]
 
@@ -94,6 +89,7 @@ class AdvantageEstimator(str, Enum):
     RLOO = "rloo"
     GRPO_PASSK = "grpo_passk"
     GiGPO = 'gigpo'
+    EXACT = "exact"
 
 
 @dataclass
@@ -357,6 +353,16 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
             )
         data.batch['advantages'] = advantages
         data.batch['returns'] = returns
+    elif adv_estimator == AdvantageEstimator.EXACT:
+        from recipe.exact.advantage import compute_exact_advantage
+
+        data, exact_metrics, exact_traces = compute_exact_advantage(
+            data,
+            config=kwargs.get("exact_config"),
+            alpha_by_bucket=kwargs.get("exact_alpha_by_bucket"),
+        )
+        data.meta_info["exact_metrics"] = exact_metrics
+        data.meta_info["exact_traces"] = exact_traces
     else:
         raise NotImplementedError
     return data
@@ -451,11 +457,27 @@ class RayPPOTrainer:
             AdvantageEstimator.REMAX,
             AdvantageEstimator.RLOO,
             AdvantageEstimator.REINFORCE_PLUS_PLUS_BASELINE,
-            AdvantageEstimator.GiGPO
+            AdvantageEstimator.GiGPO,
+            AdvantageEstimator.EXACT,
         ]:
             self.use_critic = False
         else:
             raise NotImplementedError
+
+        self.exact_alpha_controller = None
+        if (
+            self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT
+            and self.config.algorithm.exact.mode == "graph_cv"
+        ):
+            from recipe.exact.core_exact import DelayedAlphaController
+
+            environment_bucket = str(self.config.env.env_name).split("/")[0].lower()
+            cv_config = self.config.algorithm.exact.cv
+            self.exact_alpha_controller = DelayedAlphaController(
+                (environment_bucket,),
+                ridge=cv_config.ridge,
+                max_abs_alpha=cv_config.max_abs_alpha,
+            )
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
@@ -542,6 +564,20 @@ class RayPPOTrainer:
 
         if config.algorithm.use_kl_in_reward and config.actor_rollout_ref.actor.use_kl_loss:
             print("NOTICE: You have both enabled in-reward kl and kl loss.")
+
+        if config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
+            assert config.actor_rollout_ref.actor.loss_agg_mode == "seq-mean-token-sum", (
+                "EXACT requires seq-mean-token-sum so each effect-span score is a token log-probability sum"
+            )
+            assert not config.algorithm.use_kl_in_reward, (
+                "EXACT currently requires a single environment episode return; use actor KL loss, not KL-in-reward"
+            )
+            assert not config.actor_rollout_ref.actor.get("use_invalid_action_penalty", True), (
+                "EXACT invalid-action penalties must be represented as verifier factors before enabling them"
+            )
+            assert config.actor_rollout_ref.actor.ppo_epochs == 1, (
+                "EXACT pilots require one PPO epoch to limit off-policy reuse of a rollout"
+            )
 
         # critic
         if self.use_critic and not config.critic.use_dynamic_bsz:
@@ -934,6 +970,16 @@ class RayPPOTrainer:
         dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
+        torch.save(
+            {
+                "cumulative_env_steps": self.cumulative_env_steps,
+                "cumulative_generated_tokens": self.cumulative_generated_tokens,
+            },
+            os.path.join(local_global_step_folder, "trainer_budget.pt"),
+        )
+        if self.exact_alpha_controller is not None:
+            exact_cv_path = os.path.join(local_global_step_folder, "exact_cv.pt")
+            torch.save(dict(self.exact_alpha_controller.state_dict()), exact_cv_path)
 
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt")
@@ -990,6 +1036,27 @@ class RayPPOTrainer:
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+        trainer_budget_path = os.path.join(global_step_folder, "trainer_budget.pt")
+        if os.path.exists(trainer_budget_path):
+            trainer_budget = torch.load(trainer_budget_path, weights_only=False)
+            self.cumulative_env_steps = int(trainer_budget["cumulative_env_steps"])
+            self.cumulative_generated_tokens = int(trainer_budget["cumulative_generated_tokens"])
+        elif any(
+            self.config.trainer.get(limit, None) is not None
+            and int(self.config.trainer.get(limit)) > 0
+            for limit in ("max_env_steps", "max_generated_tokens")
+        ):
+            raise FileNotFoundError(
+                "budgeted training cannot resume without trainer_budget.pt: "
+                f"{global_step_folder}"
+            )
+        if self.exact_alpha_controller is not None:
+            exact_cv_path = os.path.join(global_step_folder, "exact_cv.pt")
+            if not os.path.exists(exact_cv_path):
+                raise FileNotFoundError(f"EXACT Graph-CV checkpoint state is missing: {exact_cv_path}")
+            self.exact_alpha_controller.load_state_dict(
+                torch.load(exact_cv_path, weights_only=False)
+            )
 
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen"):
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""
@@ -1003,6 +1070,41 @@ class RayPPOTrainer:
         batch.reorder(global_idx)
         global_balance_stats = log_seqlen_unbalance(seqlen_list=global_seqlen_lst, partitions=global_partition_lst, prefix=logging_prefix)
         metrics.update(global_balance_stats)
+
+    def _next_rollout_usage_upper_bound(self, prompt_count: int) -> tuple[int, int]:
+        """Return a conservative usage bound for one subsequent rollout batch."""
+
+        group_size = max(int(self.config.env.rollout.n), 1)
+        attempts = (
+            int(self.config.algorithm.filter_groups.max_num_gen_batches)
+            if self.config.algorithm.filter_groups.enable
+            else 1
+        )
+        env_steps = (
+            int(prompt_count)
+            * group_size
+            * int(self.config.env.max_steps)
+            * attempts
+        )
+        generated_tokens = env_steps * int(self.config.data.max_response_length)
+        return env_steps, generated_tokens
+
+    def _next_rollout_would_exceed_budget(self, prompt_count: int) -> bool:
+        max_env_steps = self.config.trainer.get("max_env_steps", None)
+        max_generated_tokens = self.config.trainer.get("max_generated_tokens", None)
+        next_env_steps, next_generated_tokens = self._next_rollout_usage_upper_bound(
+            prompt_count
+        )
+        return (
+            max_env_steps is not None
+            and int(max_env_steps) > 0
+            and self.cumulative_env_steps + next_env_steps > int(max_env_steps)
+        ) or (
+            max_generated_tokens is not None
+            and int(max_generated_tokens) > 0
+            and self.cumulative_generated_tokens + next_generated_tokens
+            > int(max_generated_tokens)
+        )
 
     def fit(self):
         """
@@ -1023,9 +1125,25 @@ class RayPPOTrainer:
         )
 
         self.global_steps = 0
+        self.cumulative_env_steps = 0
+        self.cumulative_generated_tokens = 0
 
         # load checkpoint before doing anything
         self._load_checkpoint()
+
+        exact_observer = None
+        if self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
+            from recipe.exact.monitor import ExactObserver
+
+            monitor_config = self.config.algorithm.exact.monitor
+            exact_observer = ExactObserver(
+                output_dir=monitor_config.output_dir,
+                conservation_tolerance=self.config.algorithm.exact.conservation_tolerance,
+                residual_warning_ratio=monitor_config.residual_warning_ratio,
+                initial_env_steps=self.cumulative_env_steps,
+                initial_generated_tokens=self.cumulative_generated_tokens,
+                initial_step=self.global_steps,
+            )
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1048,7 +1166,29 @@ class RayPPOTrainer:
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
+                exact_step_warnings = []
+                exact_traces = []
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
+                prompt_count = len(batch)
+
+                if self._next_rollout_would_exceed_budget(len(batch)):
+                    budget_metrics = {
+                        "training/global_step": self.global_steps - 1,
+                        "training/cumulative_env_steps": self.cumulative_env_steps,
+                        "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
+                    }
+                    if exact_observer is not None:
+                        exact_observer.mark_budget_reached(
+                            step=self.global_steps - 1,
+                            metrics=budget_metrics,
+                        )
+                    pprint(
+                        "Pilot stopped before a rollout that could exceed the budget: "
+                        f"env_steps={self.cumulative_env_steps}, "
+                        f"generated_tokens={self.cumulative_generated_tokens}"
+                    )
+                    progress_bar.close()
+                    return
 
                 # pop those keys for generation
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
@@ -1233,7 +1373,41 @@ class RayPPOTrainer:
                             gigpo_mode=self.config.algorithm.gigpo.mode,
                             gigpo_enable_similarity= self.config.algorithm.gigpo.enable_similarity,
                             gigpo_similarity_thresh=self.config.algorithm.gigpo.similarity_thresh,
+                            exact_config=self.config.algorithm.exact,
+                            exact_alpha_by_bucket=(
+                                self.exact_alpha_controller.active
+                                if self.exact_alpha_controller is not None
+                                else None
+                            ),
                         )
+                        metrics.update(batch.meta_info.pop("exact_metrics", {}))
+                        exact_traces = batch.meta_info.pop("exact_traces", [])
+                        if self.exact_alpha_controller is not None:
+                            from recipe.exact.advantage import fit_delayed_alpha_from_traces
+
+                            pending_alpha = fit_delayed_alpha_from_traces(
+                                self.exact_alpha_controller,
+                                exact_traces,
+                                min_samples=self.config.algorithm.exact.cv.min_samples,
+                            )
+                            if pending_alpha is not None:
+                                next_alpha = self.exact_alpha_controller.advance()
+                                for bucket, alpha in next_alpha.items():
+                                    metrics[f"exact/cv_alpha_next/{bucket}"] = float(alpha)
+                        if exact_observer is not None:
+                            from recipe.exact.monitor import build_rollout_records
+
+                            rollout_records = build_rollout_records(
+                                self.tokenizer,
+                                batch,
+                                max_records=self.config.algorithm.exact.monitor.rollout_sample_count,
+                            )
+                            exact_step_warnings = exact_observer.observe_credit(
+                                step=self.global_steps,
+                                metrics=metrics,
+                                traces=exact_traces,
+                                rollout_records=rollout_records,
+                            )
 
                     # update critic
                     if self.use_critic:
@@ -1246,7 +1420,10 @@ class RayPPOTrainer:
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
                         with _timer("update_actor", timing_raw):
-                            batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
+                            batch.meta_info["multi_turn"] = (
+                                self.config.actor_rollout_ref.rollout.multi_turn.enable
+                                or self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT
+                            )
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
@@ -1293,12 +1470,72 @@ class RayPPOTrainer:
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
 
+                rollout_padding = np.asarray(
+                    batch.non_tensor_batch.get("rollout_padding", np.zeros(len(batch), dtype=bool)),
+                    dtype=bool,
+                )
+                non_padding_rows = torch.as_tensor(
+                    ~rollout_padding,
+                    dtype=torch.bool,
+                    device=batch.batch["response_mask"].device,
+                )
+                step_env_steps = int(non_padding_rows.sum().item())
+                step_generated_tokens = int(
+                    batch.batch["response_mask"][non_padding_rows].sum().item()
+                )
+                self.cumulative_env_steps += step_env_steps
+                self.cumulative_generated_tokens += step_generated_tokens
+                metrics.update(
+                    {
+                        "training/cumulative_env_steps": self.cumulative_env_steps,
+                        "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
+                    }
+                )
+
+                if exact_observer is not None:
+                    exact_observer.complete_step(
+                        step=self.global_steps,
+                        metrics=metrics,
+                        warnings=exact_step_warnings,
+                    )
+
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
 
-                progress_bar.update(1)
-                self.global_steps += 1
-                if is_last_step:
-                    pprint(f"Final validation metrics: {last_val_metrics}")
+                max_env_steps = self.config.trainer.get("max_env_steps", None)
+                max_generated_tokens = self.config.trainer.get("max_generated_tokens", None)
+                budget_reached = (
+                    max_env_steps is not None
+                    and int(max_env_steps) > 0
+                    and self.cumulative_env_steps >= int(max_env_steps)
+                ) or (
+                    max_generated_tokens is not None
+                    and int(max_generated_tokens) > 0
+                    and self.cumulative_generated_tokens >= int(max_generated_tokens)
+                )
+                next_rollout_would_exceed = self._next_rollout_would_exceed_budget(
+                    prompt_count
+                )
+                if (budget_reached or next_rollout_would_exceed) and not is_last_step:
+                    self._save_checkpoint()
+                    if exact_observer is not None:
+                        exact_observer.mark_budget_reached(
+                            step=self.global_steps,
+                            metrics=metrics,
+                        )
+                    pprint(
+                        "Pilot budget reached: "
+                        f"env_steps={self.cumulative_env_steps}, "
+                        f"generated_tokens={self.cumulative_generated_tokens}"
+                    )
                     progress_bar.close()
                     return
+
+                progress_bar.update(1)
+                if is_last_step:
+                    pprint(f"Final validation metrics: {last_val_metrics}")
+                    if exact_observer is not None:
+                        exact_observer.mark_completed(step=self.global_steps, metrics=metrics)
+                    progress_bar.close()
+                    return
+                self.global_steps += 1

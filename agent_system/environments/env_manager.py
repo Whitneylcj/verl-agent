@@ -13,16 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, Dict, Union, Any
-from collections import defaultdict
-import torch
-import numpy as np
-from functools import partial
 import os
-from agent_system.environments.prompts import *
-from agent_system.environments.base import EnvironmentManagerBase, to_numpy
-from agent_system.memory import SimpleMemory, SearchMemory
+from functools import partial
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
 from omegaconf import OmegaConf
+
+from agent_system.environments.base import EnvironmentManagerBase, to_numpy
+from agent_system.environments.prompts import *
+from agent_system.memory import SearchMemory, SimpleMemory
+
 
 def parse_gamefile(infos):
     gamefile = []
@@ -226,6 +227,9 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
                     self._process_gamefile(gamefile, won_value, success)
                 return  # Exit after finding the first active mask
 
+    def exact_credit_snapshots(self):
+        return self.envs.exact_credit_snapshots()
+
     def _process_gamefile(self, gamefile, won_value, success):
         tasks = [
             "pick_and_place",
@@ -338,6 +342,9 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
 
         return postprocess_text_obs
 
+    def exact_credit_snapshots(self):
+        return self.envs.exact_credit_snapshots()
+
 
 class GymCardEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
@@ -439,7 +446,7 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
             try:
                 index = parts.index(self.tasks[i])
                 reformatted_obs = " [SEP] ".join(f"'{p}'" for p in parts[index+1:])
-            except:
+            except ValueError:
                 reformatted_obs = text_obs[i]
 
             postprocess_text_obs.append(reformatted_obs)
@@ -516,6 +523,9 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
                 success['webshop_task_score (not success_rate)'].append(score_value)
                 return
 
+    def exact_credit_snapshots(self):
+        return self.envs.exact_credit_snapshots()
+
 class AppWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
         self.memory = SimpleMemory()
@@ -558,9 +568,15 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
         This function builds the text observation for the agent.
         """
         postprocess_text_obs = []
+        action_mode = self.config.env.appworld.action_mode
         if init and self.supervisors is not None:
             for i in range(len(text_obs)):
-                obs = APPWORLD_TEMPLATE_NO_HIS.format(
+                template = (
+                    APPWORLD_JSON_API_TEMPLATE_NO_HIS
+                    if action_mode == "json_api"
+                    else APPWORLD_TEMPLATE_NO_HIS
+                )
+                obs = template.format(
                         supervisor_first_name=self.supervisors[i]['first_name'],
                         supervisor_last_name=self.supervisors[i]['last_name'],
                         supervisor_email=self.supervisors[i]['email'],
@@ -584,7 +600,8 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                 if len(action_history) > 10000:
                     action_history = "... " + action_history[-10000:]
 
-                obs = APPWORLD_TEMPLATE.format(
+                template = APPWORLD_JSON_API_TEMPLATE if action_mode == "json_api" else APPWORLD_TEMPLATE
+                obs = template.format(
                         supervisor_first_name=self.supervisors[i]['first_name'],
                         supervisor_last_name=self.supervisors[i]['last_name'],
                         supervisor_email=self.supervisors[i]['email'],
@@ -598,6 +615,9 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                     )
                 postprocess_text_obs.append(obs)
         return postprocess_text_obs
+
+    def exact_credit_snapshots(self):
+        return self.envs.exact_credit_snapshots()
 
 def make_envs(config):
     """
@@ -628,7 +648,7 @@ def make_envs(config):
         val_envs = GymCardEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
     elif "alfworld" in config.env.env_name.lower():
-        from agent_system.environments.env_package.alfworld import build_alfworld_envs, alfworld_projection
+        from agent_system.environments.env_package.alfworld import alfworld_projection, build_alfworld_envs
         if config.env.env_name == 'alfworld/AlfredThorEnv':
             alf_config_path = os.path.join(os.path.dirname(__file__), 'env_package/alfworld/configs/config_tw.yaml')
         elif config.env.env_name == 'alfworld/AlfredTWEnv':
@@ -686,11 +706,11 @@ def make_envs(config):
         time.sleep((config.data.train_batch_size * group_n + config.data.val_batch_size) * 0.1) # wait for the envs to be ready
         return envs, val_envs
     elif "appworld" in config.env.env_name.lower():
-        from agent_system.environments.env_package.appworld import build_appworld_envs, appworld_projection
+        from agent_system.environments.env_package.appworld import appworld_projection, build_appworld_envs
         _envs = build_appworld_envs(dataset_name='train', seed=config.env.seed, env_num=config.data.train_batch_size, group_n=group_n, start_server_id=0, resources_per_worker=resources_per_worker)
-        _val_envs = build_appworld_envs(dataset_name='test_normal', seed=config.env.seed + 1000, env_num=config.data.val_batch_size, group_n=1, start_server_id=config.data.train_batch_size*group_n, resources_per_worker=resources_per_worker)
+        _val_envs = build_appworld_envs(dataset_name=config.env.appworld.validation_split, seed=config.env.seed + 1000, env_num=config.data.val_batch_size, group_n=1, start_server_id=config.data.train_batch_size*group_n, resources_per_worker=resources_per_worker)
         
-        projection_f = partial(appworld_projection)
+        projection_f = partial(appworld_projection, action_mode=config.env.appworld.action_mode)
         envs = AppWorldEnvironmentManager(_envs, projection_f, config)
         val_envs = AppWorldEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs

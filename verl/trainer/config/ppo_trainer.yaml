@@ -252,6 +252,27 @@ algorithm:
     mode: "mean_norm" # "mean_norm" or "mean_std_norm"
     enable_similarity: False # whether to use similarity-based anchor state grouping in GiGPO (supported for text-only tasks)
     similarity_thresh: 0.95 # similarity threshold for GiGPO (0.0, 1.0)
+  exact:
+    mode: graph # temporal / graph / graph_cv
+    conservation_tolerance: 1.0e-8
+    force_residual_descendant: True
+    potential:
+      # Omit weights to use a fixed normalized sum of environment factors.
+      scale: 1.0
+      weights: null
+    # graph_cv values must come from the delayed previous-batch controller.
+    alpha_by_bucket: {}
+    cv:
+      # Low-cost detached credit covariance proxy; activation is delayed to the
+      # next rollout batch, which preserves unbiasedness.
+      fit_source: detached_credit_proxy
+      ridge: 1.0e-8
+      min_samples: 8
+      max_abs_alpha: 5.0
+    monitor:
+      output_dir: outputs/exact/${trainer.experiment_name}
+      residual_warning_ratio: 0.95
+      rollout_sample_count: 8
   filter_groups: # DAPO from https://arxiv.org/abs/2503.14476
     enable: False
     max_num_gen_batches: 10
@@ -260,6 +281,10 @@ trainer:
   balance_batch: True
   total_epochs: 30
   total_training_steps: null
+  # Optional measured rollout budgets. Training stops and checkpoints when the
+  # first positive limit is reached.
+  max_env_steps: null
+  max_generated_tokens: null
   project_name: verl_examples
   experiment_name: gsm8k
   logger: [ 'console', 'wandb' ]
@@ -314,3 +339,10 @@ env:
   webshop:
     use_small: True
     human_goals: False
+  appworld:
+    # Use held-out development tasks while tuning. Reserve test splits for the
+    # locked final evaluation.
+    validation_split: dev
+    # json_api compiles one typed JSON action into one API call. The legacy
+    # python mode remains available only for baseline compatibility.
+    action_mode: json_api

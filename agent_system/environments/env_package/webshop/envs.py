@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import ray
 import gym
 import numpy as np
+import ray
 
 # -----------------------------------------------------------------------------
 # Ray remote worker actor -----------------------------------------------------
@@ -28,21 +28,26 @@ class WebshopWorker:
     
     def __init__(self, seed, env_kwargs):
         # Lazy import avoids CUDA initialisation issues
-        import sys
         import os
+        import sys
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), 'webshop'))
         sys.path.append(project_root)
-        from web_agent_site.envs import WebAgentTextEnv  # noqa: WPS433 (runtime import)
         
         env_kwargs['seed'] = seed
         self.env = gym.make('WebAgentTextEnv-v0', **env_kwargs)
+        self._exact_score_components = {}
     
     def step(self, action):
         """Execute a step in the environment"""
+        previous_session = self.env.session
         obs, reward, done, info = self.env.step(action)
         info = dict(info or {})  # make a *copy* so we can mutate safely
         info['available_actions'] = self.env.get_available_actions()
         info['task_score'] = reward
+        if done:
+            previous_state = self.env.server.user_sessions.get(previous_session, {})
+            self._exact_score_components = dict(previous_state.get('verbose_info', {}))
+            info['score_components'] = dict(self._exact_score_components)
 
         # Redefine reward. We only use rule-based reward - win for 10, lose for 0.
         if done and reward == 1.0:
@@ -60,7 +65,13 @@ class WebshopWorker:
         info = dict(info or {})
         info['available_actions'] = self.env.get_available_actions()
         info['won'] = False
+        self._exact_score_components = {}
         return obs, info
+
+    def exact_credit_snapshot(self):
+        from recipe.exact.env_probes import webshop_factor_snapshot
+
+        return webshop_factor_snapshot(self._exact_score_components)
     
     def render(self, mode_for_render):
         """Render the environment"""
@@ -110,7 +121,8 @@ class WebshopMultiProcessEnv(gym.Env):
         self.env_num = env_num
         self.num_processes = env_num * group_n
         self.is_train = is_train
-        if not is_train: assert group_n == 1
+        if not is_train:
+            assert group_n == 1
 
         self._rng = np.random.RandomState(seed)
 
@@ -190,6 +202,9 @@ class WebshopMultiProcessEnv(gym.Env):
             info_list.append(info)
 
         return obs_list, info_list
+
+    def exact_credit_snapshots(self):
+        return ray.get([worker.exact_credit_snapshot.remote() for worker in self._workers])
 
     # ------------------------------------------------------------------
     # Convenience helpers ----------------------------------------------

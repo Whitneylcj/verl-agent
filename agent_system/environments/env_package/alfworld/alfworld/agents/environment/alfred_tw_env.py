@@ -1,17 +1,15 @@
-import os
 import json
+import os
 import random
-
-from tqdm import tqdm
-from termcolor import colored
 
 import textworld
 import textworld.agents
 import textworld.gym
+from termcolor import colored
+from tqdm import tqdm
 
-from alfworld.agents.utils.misc import Demangler, add_task_to_grammar
-from alfworld.agents.expert import HandCodedTWAgent, HandCodedAgentTimeout
-
+from alfworld.agents.expert import HandCodedAgentTimeout, HandCodedTWAgent
+from alfworld.agents.utils.misc import Demangler
 
 TASK_TYPES = {1: "pick_and_place_simple",
               2: "look_at_obj_in_light",
@@ -81,8 +79,8 @@ class AlfredExpert(textworld.core.Wrapper):
                     handcoded_expert_next_action = self._handcoded_expert.act(self.state, 0, self.state["won"], self.prev_command)
                     if handcoded_expert_next_action in self.state["admissible_commands"]:
                         self.state["extra.expert_plan"] = [handcoded_expert_next_action]
-            except HandCodedAgentTimeout:
-                raise Exception("Timeout")
+            except HandCodedAgentTimeout as error:
+                raise RuntimeError("Timeout") from error
         elif self.expert_type == AlfredExpertType.PLANNER:
             self.state["extra.expert_plan"] = self.state["policy_commands"]
         else:
@@ -109,7 +107,7 @@ class AlfredExpert(textworld.core.Wrapper):
         return self.state
 
 
-class AlfredTWEnv(object):
+class AlfredTWEnv:
     '''
     Interface for Textworld Env
     '''
@@ -160,15 +158,15 @@ class AlfredTWEnv(object):
                 game_file_path = os.path.join(root, "game.tw-pddl")
 
                 if 'movable' in root or 'Sliced' in root:
-                    log("Movable & slice trajs not supported %s" % (root))
+                    log(f"Movable & slice trajs not supported {root}")
                     continue
 
                 # Get goal description
-                with open(json_path, 'r') as f:
+                with open(json_path) as f:
                     traj_data = json.load(f)
 
                 # Check for any task_type constraints
-                if not traj_data['task_type'] in task_types:
+                if traj_data['task_type'] not in task_types:
                     log("Skipping task type")
                     continue
 
@@ -177,7 +175,7 @@ class AlfredTWEnv(object):
                     log(f"Skipping missing game! {game_file_path}")
                     continue
 
-                with open(game_file_path, 'r') as f:
+                with open(game_file_path) as f:
                     gamedata = json.load(f)
 
                 # Check if previously checked if solvable
@@ -186,7 +184,7 @@ class AlfredTWEnv(object):
                     continue
 
                 if not gamedata['solvable']:
-                    log("Skipping known %s, unsolvable game!" % game_file_path)
+                    log(f"Skipping known {game_file_path}, unsolvable game!")
                     continue
 
                 # Add to game file list
@@ -199,12 +197,12 @@ class AlfredTWEnv(object):
             num_train_games = self.config['dataset']['num_train_games'] if self.config['dataset']['num_train_games'] > 0 else len(self.game_files)
             self.game_files = self.game_files[:num_train_games]
             self.num_games = len(self.game_files)
-            print("Training with %d games" % (len(self.game_files)))
+            print(f"Training with {len(self.game_files)} games")
         else:
             num_eval_games = self.config['dataset']['num_eval_games'] if self.config['dataset']['num_eval_games'] > 0 else len(self.game_files)
             self.game_files = self.game_files[:num_eval_games]
             self.num_games = len(self.game_files)
-            print("Evaluating with %d games" % (len(self.game_files)))
+            print(f"Evaluating with {len(self.game_files)} games")
 
     def get_game_logic(self):
         self.game_logic = {
@@ -236,8 +234,8 @@ class AlfredTWEnv(object):
                 game_state, _, done = env.step(command)
                 trajectory.append(command)
                 steps += 1
-        except Exception as e:
-            print("Unsolvable: %s (%s)" % (str(e), game_file_path))
+        except Exception as error:
+            print(f"Unsolvable: {error} ({game_file_path})")
             return None
 
         return trajectory
@@ -251,7 +249,12 @@ class AlfredTWEnv(object):
         wrappers = [alfred_demangler, AlfredInfos]
 
         # Register a new Gym environment.
-        request_infos = textworld.EnvInfos(won=True, admissible_commands=True, extras=["gamefile"])
+        request_infos = textworld.EnvInfos(
+            won=True,
+            admissible_commands=True,
+            facts=True,
+            extras=["gamefile"],
+        )
         expert_type = self.config["env"]["expert_type"]
         training_method = self.config["general"]["training_method"]
 

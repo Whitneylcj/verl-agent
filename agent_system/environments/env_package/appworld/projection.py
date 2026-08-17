@@ -13,23 +13,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-import random
 from typing import List
-import re
+
+from recipe.exact.appworld_adapter import compile_json_api_action
 
 
-def appworld_projection(actions: List[str]):
+def appworld_projection(actions: List[str], action_mode: str = "python"):
     """
     An function to process the actions
     actions: the list of actions to be processeed, it is a list of strings.
     """
+    if action_mode not in {"python", "json_api"}:
+        raise ValueError(f"unsupported AppWorld action mode: {action_mode}")
     valids = [0] * len(actions)
 
     for i in range(len(actions)):
         original_str = actions[i]  # keep the original string
 
-        # Attempt to extract the substring within <code>...</code>
+        if action_mode == "json_api":
+            try:
+                actions[i] = compile_json_api_action(original_str)
+                valids[i] = 1
+            except (TypeError, ValueError):
+                actions[i] = "raise ValueError('invalid structured action')"
+            continue
+
+        # Legacy unrestricted Python mode.
         start_tag = "<code>"
         end_tag = "</code>"
         start_idx = actions[i].find(start_tag)
@@ -48,7 +57,7 @@ def appworld_projection(actions: List[str]):
             actions[i] = extracted_action
             valids[i] = 1
 
-        except:
+        except Exception:
             extracted_action = actions[i][-100:]
             valids[i] = 0
             actions[i] = extracted_action
