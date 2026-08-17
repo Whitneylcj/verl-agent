@@ -39,15 +39,28 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     class _FakeModule:
         _fsdp_wrapped_module = _FakePeftModel()
 
-        flat_param = torch.arange(4, dtype=torch.float32)
-        flat_param._fqns = [
-            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.base_layer.weight",
-            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_A.default.weight",
-            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_B.default.weight",
+        root_flat_param = torch.arange(2, dtype=torch.float32)
+        root_flat_param._fqns = ["embed_tokens.weight"]
+        root_flat_param._shapes = [torch.Size([2])]
+        root_flat_param._numels_with_padding = [2]
+        root_flat_param._is_padding_mask = [False]
+        _handle = SimpleNamespace(flat_param=root_flat_param)
+
+        layer_flat_param = torch.arange(2, dtype=torch.float32)
+        layer_flat_param._fqns = [
+            "q_proj.lora_A.default.weight",
+            "q_proj.lora_B.default.weight",
         ]
-        flat_param._shapes = [torch.Size([2]), torch.Size([1]), torch.Size([1])]
-        flat_param._numels = [2, 1, 1]
-        _all_handles = [SimpleNamespace(flat_param=flat_param)]
+        layer_flat_param._shapes = [torch.Size([1]), torch.Size([1])]
+        layer_flat_param._numels_with_padding = [1, 1]
+        layer_flat_param._is_padding_mask = [False, False]
+        layer = SimpleNamespace(_handle=SimpleNamespace(flat_param=layer_flat_param))
+
+        def named_modules(self):
+            return [
+                ("", self),
+                ("_fsdp_wrapped_module.base_model.model.layers.0", self.layer),
+            ]
 
     class _FakeInferenceEngine:
         def wake_up(self, tags=None):

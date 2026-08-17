@@ -58,16 +58,32 @@ def _collect_single_rank_lora_params(fsdp_module: FSDP, wrapped_module: PeftMode
         raise RuntimeError("single-rank LoRA staging currently requires bias='none' and use_dora=False")
 
     raw_state = OrderedDict()
-    for handle in fsdp_module._all_handles:
+    seen_handles = set()
+    for module_name, submodule in fsdp_module.named_modules():
+        if fsdp_version(submodule) <= 0:
+            continue
+        handle = getattr(submodule, "_handle", None)
+        if handle is None or id(handle) in seen_handles:
+            continue
+        seen_handles.add(id(handle))
         flat_param = handle.flat_param
+        normalized_prefix = module_name.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
         offset = 0
-        for fqn, shape, numel in zip(flat_param._fqns, flat_param._shapes, flat_param._numels, strict=True):
+        param_index = 0
+        for numel, is_padding in zip(flat_param._numels_with_padding, flat_param._is_padding_mask, strict=True):
             numel = int(numel)
+            if is_padding:
+                offset += numel
+                continue
+            fqn = flat_param._fqns[param_index]
+            shape = flat_param._shapes[param_index]
+            param_index += 1
             if "lora_" in fqn:
                 normalized_name = fqn.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
-                raw_state[normalized_name] = flat_param[offset : offset + numel].view(shape)
+                full_name = ".".join(part for part in (normalized_prefix, normalized_name) if part)
+                raw_state[full_name] = flat_param[offset : offset + numel].view(shape)
             offset += numel
-        if offset != flat_param.numel():
+        if param_index != len(flat_param._fqns) or offset != flat_param.numel():
             raise RuntimeError("single-rank flat parameter contains unexpected padding")
 
     params = get_peft_model_state_dict(wrapped_module, state_dict=raw_state)
