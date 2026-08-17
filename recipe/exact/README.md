@@ -116,6 +116,9 @@ Prepared parquet inputs are size-addressed under
 `data/verl-agent/trainN_valM/text/`. Changing `TRAIN_SIZE` or
 `VALIDATION_SIZE` therefore cannot silently reuse a larger prior dataset; the
 three matched estimator stages share the same size-addressed files.
+These files contain only deterministic empty text prompts and sample indices,
+because the actual task prompt comes from the selected agent environment. They
+are generated locally and do not download the unrelated Geometry3k dataset.
 
 The same `MODEL_PATH`, seed, sizes, budgets, optimizer, and schedule must be
 used for the official GRPO baseline, the sequence-score-matched GRPO control,

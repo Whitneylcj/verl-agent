@@ -183,11 +183,10 @@ if [[ "${environment_name}" == "appworld" && "${algorithm_name}" == "exact" ]]; 
 fi
 
 if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then
-  python3 -m examples.data_preprocess.prepare \
-    --mode text \
-    --local_dir "${prepared_data_root}" \
-    --train_data_size "${train_size}" \
-    --val_data_size "${validation_size}"
+  python3 -m recipe.exact.prepare_prompts \
+    --output-dir "${prepared_data_root}/text" \
+    --train-size "${train_size}" \
+    --validation-size "${validation_size}"
 fi
 
 manifest_args=(
