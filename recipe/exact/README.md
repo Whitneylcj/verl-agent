@@ -87,6 +87,11 @@ use the official non-thinking sampling defaults (`temperature=0.7`,
 family still requires a tokenizer, action-format, Transformers, and vLLM smoke
 test before training.
 
+AppWorld uses an 8192-token prompt budget because documented API responses can
+push a two-turn interaction history past 4096 tokens. Truncation remains an
+error: raise the explicit budget only after inspecting the offending history
+rather than silently dropping tool evidence.
+
 After download authorization, prepare the pinned default model and exercise
 both inference backends with:
 

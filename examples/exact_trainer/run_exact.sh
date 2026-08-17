@@ -52,7 +52,7 @@ case "${environment_name}" in
     env_name=AppWorld
     default_exact_mode=graph
     max_steps=20
-    max_prompt_length=4096
+    max_prompt_length=8192
     train_size=${TRAIN_SIZE:-2}
     validation_size=${VALIDATION_SIZE:-4}
     group_size=${GROUP_SIZE:-2}

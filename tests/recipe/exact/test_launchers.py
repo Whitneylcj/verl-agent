@@ -49,6 +49,12 @@ def test_appworld_defaults_to_exact_g() -> None:
     assert _run_dir("appworld").startswith("exact_graph_")
 
 
+def test_appworld_preflight_preserves_long_api_documentation() -> None:
+    pytest.importorskip("hydra")
+    config = _preflight("appworld")
+    assert "max_prompt_length: 8192" in config
+
+
 def test_exact_mode_override_is_preserved() -> None:
     assert _run_dir("sokoban", EXACT_MODE="graph_cv").startswith("exact_graph_cv_")
 
