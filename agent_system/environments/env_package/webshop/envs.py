@@ -32,9 +32,11 @@ class WebshopWorker:
         import sys
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), 'webshop'))
         sys.path.append(project_root)
-        
+
+        from web_agent_site.envs import WebAgentTextEnv
+
         env_kwargs['seed'] = seed
-        self.env = gym.make('WebAgentTextEnv-v0', **env_kwargs)
+        self.env = WebAgentTextEnv(**env_kwargs)
         self._exact_score_components = {}
     
     def step(self, action):
