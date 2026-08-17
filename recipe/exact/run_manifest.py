@@ -79,6 +79,26 @@ def _toy_audit_evidence() -> dict[str, Any] | None:
     }
 
 
+def _appworld_schema_audit_evidence() -> dict[str, Any] | None:
+    raw_path = os.environ.get("APPWORLD_SCHEMA_AUDIT_PATH")
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser().resolve()
+    payload = path.read_bytes()
+    report = json.loads(payload)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": report.get("schema_version"),
+        "passed": report.get("passed"),
+        "commit": report.get("git", {}).get("commit"),
+        "appworld_version": report.get("appworld_version"),
+        "task_count": report.get("task_count"),
+        "factor_count": report.get("factor_count"),
+        "opaque_factor_rate": report.get("opaque_factor_rate"),
+    }
+
+
 def build_manifest(
     *,
     repo_root: Path,
@@ -123,10 +143,14 @@ def build_manifest(
                 "WEBSHOP_SEARCH_ROOT",
                 "EXACT_CONSOLE_LOG",
                 "EXACT_TOY_AUDIT_PATH",
+                "APPWORLD_SCHEMA_AUDIT_PATH",
             )
             if os.environ.get(key)
         },
-        "preflight": {"toy_audit": _toy_audit_evidence()},
+        "preflight": {
+            "toy_audit": _toy_audit_evidence(),
+            "appworld_schema_audit": _appworld_schema_audit_evidence(),
+        },
         "hydra_overrides": redacted_overrides,
         "hydra_overrides_sha256": override_digest,
     }

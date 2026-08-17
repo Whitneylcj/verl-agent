@@ -143,6 +143,7 @@ After installing the pinned AppWorld checkout and its data, start only the
 ports owned by this recipe with:
 
 ```bash
+bash examples/exact_trainer/run_appworld_schema_audit.sh
 bash examples/exact_trainer/start_appworld_services.sh
 # later, stop exactly those sessions
 bash examples/exact_trainer/stop_appworld_services.sh

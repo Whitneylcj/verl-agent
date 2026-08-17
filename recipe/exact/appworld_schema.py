@@ -17,7 +17,7 @@ from recipe.exact.appworld_adapter import parse_json_api_action
 ALL_RESOURCE = "exact.resource.all"
 UNKNOWN_RESOURCE = "exact.resource.unknown"
 POLICY_CONTEXT_RESOURCE = "appworld.policy_context"
-SUPPORTED_APPWORLD_SCHEMA_VERSIONS = frozenset({"0.2.0"})
+SUPPORTED_APPWORLD_SCHEMA_VERSIONS = frozenset({"0.2.0", "0.2.0.dev0"})
 _AUDITED_CROSS_APP_SERVICES = frozenset({"admin", "file_system", "gmail", "phone"})
 
 

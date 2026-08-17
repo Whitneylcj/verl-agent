@@ -84,3 +84,29 @@ def test_manifest_hashes_the_verified_toy_audit(tmp_path, monkeypatch):
         "status": "pass",
         "commit": "abc",
     }
+
+
+def test_manifest_hashes_the_verified_appworld_schema_audit(tmp_path, monkeypatch):
+    audit_path = tmp_path / "appworld-schema-audit.json"
+    payload = b'{"schema_version":"exact.appworld.schema-audit.v1","passed":true,"git":{"commit":"def"},"appworld_version":"0.2.0.dev0","task_count":732,"factor_count":3660,"opaque_factor_rate":0.01}\n'
+    audit_path.write_bytes(payload)
+    monkeypatch.setenv("APPWORLD_SCHEMA_AUDIT_PATH", str(audit_path))
+
+    manifest = build_manifest(
+        repo_root=Path(__file__).resolve().parents[3],
+        experiment=_experiment(),
+        overrides=[],
+        include_hardware=False,
+    )
+
+    assert manifest["preflight"]["appworld_schema_audit"] == {
+        "path": str(audit_path.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": "exact.appworld.schema-audit.v1",
+        "passed": True,
+        "commit": "def",
+        "appworld_version": "0.2.0.dev0",
+        "task_count": 732,
+        "factor_count": 3660,
+        "opaque_factor_rate": 0.01,
+    }
