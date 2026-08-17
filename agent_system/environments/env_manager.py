@@ -657,6 +657,11 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                         action_history=action_history.strip(),
                         current_step=len(self.memory[i]) + 1,
                         current_observation=text_obs[i],
+                        auth_guidance=(
+                            appworld_json_auth_guidance(record["action"] for record in self.memory[i])
+                            if action_mode == "json_api"
+                            else ""
+                        ),
                     )
                 postprocess_text_obs.append(obs)
         return postprocess_text_obs

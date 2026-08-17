@@ -6,6 +6,7 @@ pytest.importorskip("omegaconf")
 
 from agent_system.environments.env_manager import AppWorldEnvironmentManager
 from agent_system.environments.env_package.appworld.envs import appworld_execution_succeeded
+from agent_system.environments.prompts.appworld import appworld_json_auth_guidance
 
 
 class _FakeAppWorldEnvs:
@@ -54,7 +55,22 @@ def test_json_api_history_keeps_model_action_not_compiled_python():
     assert envs.projected_actions == ["print(apis.api_docs.show_app_descriptions(**{}))"]
     assert manager.memory[0][0]["action"] == model_action
     assert f"Action 1:\n{model_action}" in observations["text"][0]
+    assert '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}' in observations["text"][0]
     assert bool(infos[0]["is_action_syntax_valid"])
     assert not bool(infos[0]["is_action_execution_valid"])
     assert not bool(infos[0]["is_action_valid"])
     assert infos[0]["tool_calling"] == 1.0
+
+
+def test_json_api_auth_guidance_advances_only_after_required_calls():
+    show_supervisor_apis = '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}'
+    show_password_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}'
+    fetch_passwords = '{"app":"supervisor","api":"show_account_passwords","arguments":{}}'
+
+    assert "show_api_descriptions" in appworld_json_auth_guidance([])
+    assert "show_api_descriptions" in appworld_json_auth_guidance(["not-json"])
+    wrong_app = '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"spotify"}}'
+    assert "show_api_descriptions" in appworld_json_auth_guidance([wrong_app])
+    assert "show_api_doc" in appworld_json_auth_guidance([show_supervisor_apis])
+    assert "show_account_passwords" in appworld_json_auth_guidance([show_supervisor_apis, show_password_doc])
+    assert "access_token" in appworld_json_auth_guidance([show_supervisor_apis, show_password_doc, fetch_passwords])
