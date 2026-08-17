@@ -13,10 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-import random
-from typing import List
 import re
+from typing import List
 
 
 def sokoban_projection(actions: List[str]):
@@ -44,42 +42,12 @@ def sokoban_projection(actions: List[str]):
     valids = [0] * len(actions)
 
     for i in range(len(actions)):
-        original_str = actions[i]  # keep the original string
         actions[i] = actions[i].lower()
-
-        # Attempt to extract the substring within <action>...</action>
-        start_tag = "<action>"
-        end_tag = "</action>"
-        start_idx = actions[i].find(start_tag)
-        end_idx = actions[i].find(end_tag)
-        try:
-            if start_idx == -1 or end_idx == -1:
-                # If we can't find a valid <action>...</action> block, mark as invalid
-                actions[i] = 0  # 0 is invalid action for Sokoban
-                continue
-
-            # Extract just the content between the tags
-            extracted_action = actions[i][start_idx + len(start_tag):end_idx].strip().lower()
-
-            for act in action_pools.keys():
-                if act in extracted_action:
-                    actions[i] = action_pools[act]
-                    # if found legal action, set valids to 1
-                    valids[i] = 1
-                    break
-
-            # If no valid action found, randomly select from pool
-            if valids[i] == 0:
-                actions[i] = 0
-
-        except:
-            # randomly choose an action from the action list if illegal
+        matches = re.findall(r"<action>\s*(up|down|left|right)\s*</action>", actions[i])
+        if len(matches) != 1:
             actions[i] = 0
-
-        # check <think>...</think>
-        think_start_idx = original_str.find("<think>")
-        think_end_idx = original_str.find("</think>")
-        if think_start_idx == -1 or think_end_idx == -1:
-            valids[i] = 0
+            continue
+        actions[i] = action_pools[matches[0]]
+        valids[i] = 1
 
     return actions, valids
