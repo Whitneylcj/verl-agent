@@ -8,6 +8,7 @@ def _seed_only_env(*, is_train: bool, seed: int, env_num: int = 3, group_n: int 
     env.is_train = is_train
     env.env_num = env_num
     env.group_n = group_n
+    env.workers = []
     env._reset_rng = np.random.RandomState(seed)
     env._validation_seeds = None
     if not is_train:
