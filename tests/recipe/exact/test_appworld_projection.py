@@ -5,7 +5,6 @@ import pytest
 
 from recipe.exact.appworld_adapter import compile_json_api_action, parse_json_api_action
 
-
 _PROJECTION_PATH = Path(__file__).parents[3] / "agent_system/environments/env_package/appworld/projection.py"
 _PROJECTION_SPEC = importlib.util.spec_from_file_location("exact_appworld_projection", _PROJECTION_PATH)
 assert _PROJECTION_SPEC is not None and _PROJECTION_SPEC.loader is not None

@@ -53,7 +53,7 @@ def appworld_projection(actions: List[str], action_mode: str = "python"):
                 continue
 
             # Extract just the content between the tags
-            extracted_action = projected_actions[i][start_idx + len(start_tag):end_idx]
+            extracted_action = projected_actions[i][start_idx + len(start_tag) : end_idx]
 
             projected_actions[i] = extracted_action
             valids[i] = 1

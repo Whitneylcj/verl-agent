@@ -548,12 +548,8 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
 
         text_obs, rewards, dones, infos = self.envs.step(actions)
 
-        history_actions = (
-            original_text_actions
-            if self.config.env.appworld.action_mode == "json_api"
-            else actions
-        )
-        self.memory.store({'text_obs': text_obs, 'action': history_actions})
+        history_actions = original_text_actions if self.config.env.appworld.action_mode == "json_api" else actions
+        self.memory.store({"text_obs": text_obs, "action": history_actions})
         self.pre_text_obs = text_obs
 
         full_text_obs = self.build_text_obs(text_obs)
