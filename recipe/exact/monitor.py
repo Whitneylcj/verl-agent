@@ -600,6 +600,24 @@ class AgentRunObserver:
             warnings=self._metric_warnings(metrics),
         )
 
+    def observe_update(
+        self,
+        step: int,
+        metrics: Mapping[str, Any],
+        warnings: Sequence[str],
+    ) -> list[str]:
+        """Checkpoint optimizer metrics before validation or checkpoint I/O."""
+
+        metrics = self._validated_metrics(metrics, step=step)
+        final_warnings = list(dict.fromkeys([*warnings, *self._metric_warnings(metrics)]))
+        self._write_heartbeat(
+            status="updated",
+            step=step,
+            metrics=metrics,
+            warnings=final_warnings,
+        )
+        return final_warnings
+
     def complete_step(self, step: int, metrics: Mapping[str, Any], warnings: Sequence[str]) -> None:
         metrics = self._validated_metrics(metrics, step=step)
         if "training/cumulative_env_steps" in metrics:
@@ -652,11 +670,25 @@ class AgentRunObserver:
             "type": type(error).__name__,
             "message": redact_rollout_text(str(error), max_chars=2_000),
         }
+        previous_metrics: Mapping[str, Any] = {}
+        previous_warnings: Sequence[str] = ()
+        heartbeat_path = self.output_dir / "heartbeat.json"
+        if heartbeat_path.exists():
+            try:
+                with heartbeat_path.open(encoding="utf-8") as handle:
+                    previous = json.load(handle)
+                if isinstance(previous, Mapping):
+                    if isinstance(previous.get("metrics"), Mapping):
+                        previous_metrics = previous["metrics"]
+                    if isinstance(previous.get("warnings"), list):
+                        previous_warnings = previous["warnings"]
+            except (OSError, TypeError, ValueError):
+                pass
         self._write_heartbeat(
             status="failed",
             step=step,
-            metrics={},
-            warnings=["trainer_exception"],
+            metrics=previous_metrics,
+            warnings=list(dict.fromkeys([*previous_warnings, "trainer_exception"])),
             failure=failure,
         )
 

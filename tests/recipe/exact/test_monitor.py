@@ -403,3 +403,21 @@ def test_observer_persists_redacted_trainer_failure(tmp_path):
     assert heartbeat["failure"]["type"] == "RuntimeError"
     assert "abc123" not in heartbeat["failure"]["message"]
     assert "jane@example.com" not in heartbeat["failure"]["message"]
+
+
+def test_observer_preserves_update_metrics_when_later_validation_fails(tmp_path):
+    observer = ExactObserver(tmp_path, ppo_kl_warning=0.1)
+    credit_metrics = {**_metrics(), "exact/credit_mean": 0.25}
+    warnings = observer.observe_credit(1, credit_metrics, [], [])
+    warnings = observer.observe_update(
+        1,
+        {**credit_metrics, "actor/pg_loss": -0.5, "actor/ppo_kl": 0.2},
+        warnings,
+    )
+    observer.mark_failed(1, RuntimeError("post-update validation failed"))
+
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["status"] == "failed"
+    assert heartbeat["metrics"]["exact/credit_mean"] == 0.25
+    assert heartbeat["metrics"]["actor/pg_loss"] == -0.5
+    assert set(heartbeat["warnings"]) == {"high_ppo_kl", "trainer_exception"}

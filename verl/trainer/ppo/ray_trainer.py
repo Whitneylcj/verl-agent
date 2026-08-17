@@ -1555,6 +1555,12 @@ class RayPPOTrainer:
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                        if run_observer is not None:
+                            step_warnings = run_observer.observe_update(
+                                step=self.global_steps,
+                                metrics=metrics,
+                                warnings=step_warnings,
+                            )
 
                     # Log rollout generations if enabled
                     rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)

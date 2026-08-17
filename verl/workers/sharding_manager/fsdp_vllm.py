@@ -178,6 +178,23 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             params = self.module.state_dict()
         log_gpu_memory_usage("After state_dict() in sharding manager memory", logger=logger)
 
+        # Layered LoRA collection materializes a detached CPU state dict.  Once
+        # that copy exists, keeping the full FSDP actor on GPU while waking the
+        # vLLM weights only creates a transient second copy of the base model.
+        # That overlap can OOM after an optimizer step even when rollout and
+        # training each fit independently.  Restrict the early offload to the
+        # verified CPU LoRA path; non-PEFT state dicts may still alias GPU
+        # storage and must remain resident until vLLM has consumed them.
+        actor_offloaded_before_wake = False
+        lora_params_are_cpu = bool(params) and peft_config is not None and all(
+            getattr(param, "device", None) is not None and param.device.type == "cpu"
+            for param in params.values()
+        )
+        if self.offload_param and lora_params_are_cpu:
+            offload_fsdp_model_to_cpu(self.module)
+            get_torch_device().empty_cache()
+            actor_offloaded_before_wake = True
+
         # Copy, not share memory
         load_format = "hf" if self.full_params else "dtensor"
 
@@ -198,7 +215,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             self.update_params(params, peft_config=peft_config)
             log_gpu_memory_usage("After sync model weights in sharding manager", logger=logger)
             del params
-            if self.offload_param:
+            if self.offload_param and not actor_offloaded_before_wake:
                 offload_fsdp_model_to_cpu(self.module)
             get_torch_device().empty_cache()
 
