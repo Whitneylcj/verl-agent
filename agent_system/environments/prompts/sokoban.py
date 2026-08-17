@@ -34,6 +34,11 @@ You can only push boxes. You can't pull them, so plan ahead to avoid getting stu
 You can't walk through or push boxes into walls (`#`).
 To avoid traps, do not push boxes into corners or against walls where they can't be moved again.
 
+# Planning Checklist
+Locate the player, every box, and every target before choosing an action.
+Choose the next useful box push, then move the player to the side opposite that push direction.
+If the previous action left the board unchanged, choose a different non-blocked action instead of repeating a loop.
+
 # Current Step
 Your current observation is:
 {current_observation}
@@ -64,6 +69,11 @@ You can only push boxes. You can't pull them, so plan ahead to avoid getting stu
 You can't walk through or push boxes into walls (`#`).
 To avoid traps, do not push boxes into corners or against walls where they can't be moved again.
 
+# Planning Checklist
+Locate the player, every box, and every target before choosing an action.
+Choose the next useful box push, then move the player to the side opposite that push direction.
+If the previous action left the board unchanged, choose a different non-blocked action instead of repeating a loop.
+
 # Current Step
 Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history}
 You are now at step {current_step} and your current observation is:
@@ -82,6 +92,11 @@ You are an expert agent operating in the Sokoban environment. Your goal is to pu
 You can only push boxes. You can't pull them, so plan ahead to avoid getting stuck.
 You can't walk through or push boxes into walls.
 To avoid traps, do not push boxes into corners or against walls where they can't be moved again.
+
+# Planning Checklist
+Locate the player, every box, and every target before choosing an action.
+Choose the next useful box push, then move the player to the side opposite that push direction.
+If the previous action left the board unchanged, choose a different non-blocked action instead of repeating a loop.
 
 # Visual Elements in the Image:
 Character: A small, green alien-like figure with two antennae and black eyes. It represents you.
