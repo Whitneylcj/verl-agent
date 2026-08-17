@@ -125,6 +125,33 @@ def test_scaled_seq_mean_loss_equals_trajectory_mean_span_token_sum():
     torch.testing.assert_close(actual, expected)
 
 
+def test_full_batch_micro_accumulation_preserves_trajectory_mean():
+    pytest.importorskip("ray")
+    from verl.trainer.ppo.core_algos import agg_loss
+
+    raw_credits = torch.tensor([[1.0], [2.0], [3.0], [4.0], [5.0], [6.0]])
+    token_score_terms = torch.tensor([[0.1], [0.2], [0.3], [0.4], [0.5], [0.6]])
+    response_mask = torch.ones_like(raw_credits)
+    trajectory_count = 2
+    batch_size = len(raw_credits)
+    micro_batch_size = 2
+    accumulation_steps = batch_size // micro_batch_size
+    scaled_credits = raw_credits * (batch_size / trajectory_count)
+
+    accumulated = torch.tensor(0.0)
+    for start in range(0, batch_size, micro_batch_size):
+        end = start + micro_batch_size
+        micro_loss = agg_loss(
+            loss_mat=token_score_terms[start:end] * scaled_credits[start:end],
+            loss_mask=response_mask[start:end],
+            loss_agg_mode="seq-mean-token-sum",
+        )
+        accumulated = accumulated + micro_loss / accumulation_steps
+
+    expected = torch.sum(token_score_terms * raw_credits) / trajectory_count
+    torch.testing.assert_close(accumulated, expected)
+
+
 def test_missing_schema_uses_all_to_all_fallback():
     data = _test_batch()
     data.non_tensor_batch["exact_effect_schema"][:3] = None

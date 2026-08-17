@@ -99,15 +99,14 @@ def adjust_batch(config, data: DataProto, mode="copy") -> DataProto:
         size_divisor_ref = config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu * world_size
     else:
         size_divisor_ref = size_divisor_rollout
-    if "multi_modal_inputs" in data.non_tensor_batch:
+    if "multi_modal_inputs" in data.non_tensor_batch and not is_exact:
         size_divisor_actor = config.actor_rollout_ref.actor.ppo_mini_batch_size
     else:
         size_divisor_actor = config.actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu * world_size
+    # EXACT is accumulated as one logical trajectory batch by the actor.  It
+    # therefore needs only worker/micro-batch divisibility, not copy padding to
+    # a PPO mini-batch boundary.
     divisors = [size_divisor_ref, size_divisor_rollout, size_divisor_actor]
-    if is_exact:
-        # Keep every optimizer mini-batch full; otherwise the actor's fixed
-        # gradient-accumulation divisor would underweight the final partial one.
-        divisors.append(config.actor_rollout_ref.actor.ppo_mini_batch_size)
     size_divisor = np.lcm.reduce(np.array(divisors)).item()
 
     # check if the batch size is divisible by the dp size, if not, delete the last few samples to make it divisible

@@ -329,14 +329,24 @@ class DataParallelPPOActor(BasePPOActor):
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
+        is_exact_objective = "exact_aux_loss_scale" in batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         if has_multi_modal_inputs:
-            num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
             non_tensor_select_keys = ["multi_modal_inputs"]
-            dataloader = data.select(select_keys, non_tensor_select_keys).chunk(num_mini_batches)
+            selected_data = data.select(select_keys, non_tensor_select_keys)
+            if is_exact_objective:
+                dataloader = (selected_data,)
+            else:
+                num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
+                dataloader = selected_data.chunk(num_mini_batches)
+        elif is_exact_objective:
+            # EXACT's trajectory_scale is derived for the full rollout batch.
+            # Accumulate every action row before one optimizer step so PPO
+            # mini-batch boundaries cannot rescale the trajectory objective.
+            dataloader = (batch,)
         else:
             dataloader = batch.split(self.config.ppo_mini_batch_size)
 
@@ -346,14 +356,17 @@ class DataParallelPPOActor(BasePPOActor):
                 # split batch into micro_batches
                 mini_batch = data
                 if has_multi_modal_inputs:
-                    self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
-                    num_micro_batches = mini_batch.batch.batch_size[0] // self.config.ppo_micro_batch_size_per_gpu
+                    mini_batch_size = mini_batch.batch.batch_size[0]
+                    accumulation_batch_size = mini_batch_size if is_exact_objective else self.config.ppo_mini_batch_size
+                    self.gradient_accumulation = accumulation_batch_size // self.config.ppo_micro_batch_size_per_gpu
+                    num_micro_batches = mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
                 elif self.config.use_dynamic_bsz:
                     max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
                     micro_batches, _ = rearrange_micro_batches(batch=mini_batch, max_token_len=max_token_len)
                 else:
-                    self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
+                    accumulation_batch_size = mini_batch.batch_size[0] if is_exact_objective else self.config.ppo_mini_batch_size
+                    self.gradient_accumulation = accumulation_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     # split batch into micro_batches
                     micro_batches = mini_batch.split(self.config.ppo_micro_batch_size_per_gpu)
 
@@ -443,7 +456,8 @@ class DataParallelPPOActor(BasePPOActor):
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
-                        loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
+                        normalization_batch_size = batch.batch_size[0] if is_exact_objective else self.config.ppo_mini_batch_size
+                        loss = policy_loss * (len(data) / normalization_batch_size)
                     else:
                         loss = policy_loss / self.gradient_accumulation
                     loss.backward()
