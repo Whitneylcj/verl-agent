@@ -32,6 +32,13 @@ Programmatic 0–1 factors use the normalized potential scale `1.0` by default;
 set `POTENTIAL_SCALE` only as a declared ablation, never as an implicit tuning
 change between matched runs.
 
+The Sokoban verifier snapshot includes per-target occupancy, normalized minimum
+box-to-target Manhattan matching progress, and a conservative static-corner
+deadlock flag. These factors expose pre-terminal progress without entering the
+model context. Target occupancy alone is insufficient for the one-box probe:
+it changes only at success and therefore collapses Exact-T to outcome-return
+broadcasting across the trajectory.
+
 ## Validation order
 
 Run local theory tests first:

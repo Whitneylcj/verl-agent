@@ -27,8 +27,52 @@ def _snapshot(
     }
 
 
+def _minimum_manhattan_matching_distance(
+    boxes: Sequence[tuple[int, int]],
+    targets: Sequence[tuple[int, int]],
+) -> int:
+    """Return the exact minimum one-to-one box/target Manhattan distance."""
+
+    if len(boxes) != len(targets) or not boxes:
+        raise ValueError("Sokoban probe requires equal nonzero box and target counts")
+    costs = [[abs(box_row - target_row) + abs(box_column - target_column) for target_row, target_column in targets] for box_row, box_column in boxes]
+    best_by_mask = {0: 0}
+    for box_index in range(len(boxes)):
+        next_best: dict[int, int] = {}
+        for mask, prefix_cost in best_by_mask.items():
+            for target_index, cost in enumerate(costs[box_index]):
+                target_bit = 1 << target_index
+                if mask & target_bit:
+                    continue
+                next_mask = mask | target_bit
+                candidate = prefix_cost + cost
+                next_best[next_mask] = min(candidate, next_best.get(next_mask, candidate))
+        best_by_mask = next_best
+    return best_by_mask[(1 << len(targets)) - 1]
+
+
+def _has_static_corner_deadlock(
+    room_fixed: np.ndarray,
+    boxes_off_target: Sequence[tuple[int, int]],
+) -> bool:
+    """Detect boxes trapped by two perpendicular static walls or boundaries."""
+
+    rows, columns = room_fixed.shape
+
+    def blocked(row: int, column: int) -> bool:
+        outside_room = row < 0 or row >= rows or column < 0 or column >= columns
+        return outside_room or room_fixed[row, column] == 0
+
+    for row, column in boxes_off_target:
+        blocked_vertically = blocked(row - 1, column) or blocked(row + 1, column)
+        blocked_horizontally = blocked(row, column - 1) or blocked(row, column + 1)
+        if blocked_vertically and blocked_horizontally:
+            return True
+    return False
+
+
 def sokoban_factor_snapshot(room_fixed: Any, room_state: Any) -> dict[str, Any]:
-    """Return one goal-occupancy bit for each fixed Sokoban target cell."""
+    """Return target occupancy, matching progress, and static-deadlock factors."""
 
     room_fixed = np.asarray(room_fixed)
     room_state = np.asarray(room_state)
@@ -37,13 +81,31 @@ def sokoban_factor_snapshot(room_fixed: Any, room_state: Any) -> dict[str, Any]:
     targets = sorted(map(tuple, np.argwhere(room_fixed == 2).tolist()))
     if not targets:
         raise ValueError("Sokoban probe found no target cells")
-    factor_ids = tuple(f"target:{row}:{column}" for row, column in targets)
-    values = tuple(float(room_state[row, column] == 3) for row, column in targets)
-    read_sets = {
-        factor_id: (f"sokoban.cell:{row}:{column}",)
-        for factor_id, (row, column) in zip(factor_ids, targets)
-    }
-    return _snapshot(factor_ids, values, read_sets, "exact.sokoban.targets.v1")
+    boxes = sorted(map(tuple, np.argwhere(np.isin(room_state, (3, 4))).tolist()))
+    if len(boxes) != len(targets):
+        raise ValueError(f"Sokoban probe found {len(boxes)} boxes for {len(targets)} targets")
+
+    target_factor_ids = tuple(f"target:{row}:{column}" for row, column in targets)
+    target_values = tuple(float(room_state[row, column] == 3) for row, column in targets)
+    matching_distance = _minimum_manhattan_matching_distance(boxes, targets)
+    max_matching_distance = len(boxes) * sum(size - 1 for size in room_fixed.shape)
+    matching_progress = 1.0 - matching_distance / max_matching_distance
+    boxes_off_target = sorted(map(tuple, np.argwhere(room_state == 4).tolist()))
+    deadlock_free = float(not _has_static_corner_deadlock(room_fixed, boxes_off_target))
+
+    factor_ids = (*target_factor_ids, "matching_progress", "deadlock_free")
+    values = (*target_values, matching_progress, deadlock_free)
+    read_sets = {factor_id: ("sokoban.box_positions", "sokoban.target_positions") for factor_id in target_factor_ids}
+    read_sets["matching_progress"] = (
+        "sokoban.box_positions",
+        "sokoban.target_positions",
+    )
+    read_sets["deadlock_free"] = (
+        "sokoban.box_positions",
+        "sokoban.target_positions",
+        "sokoban.wall_layout",
+    )
+    return _snapshot(factor_ids, values, read_sets, "exact.sokoban.progress.v2")
 
 
 def _normalize_alfworld_entity(value: Any) -> str:

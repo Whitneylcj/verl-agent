@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from recipe.exact.env_probes import (
     alfworld_factor_snapshot,
@@ -10,11 +11,73 @@ from recipe.exact.env_probes import (
 
 
 def test_sokoban_target_bits_have_stable_coordinate_ids():
-    fixed = np.array([[0, 0, 0], [0, 2, 2], [0, 0, 0]])
-    state = np.array([[0, 0, 0], [0, 3, 4], [0, 0, 0]])
+    fixed = np.array(
+        [
+            [0, 0, 0, 0, 0, 0],
+            [0, 1, 2, 1, 2, 0],
+            [0, 1, 1, 1, 1, 0],
+            [0, 1, 1, 1, 1, 0],
+            [0, 0, 0, 0, 0, 0],
+        ]
+    )
+    state = fixed.copy()
+    state[1, 2] = 3
+    state[2, 3] = 4
+    state[3, 1] = 5
     snapshot = sokoban_factor_snapshot(fixed, state)
-    assert snapshot["factor_ids"] == ("target:1:1", "target:1:2")
-    assert snapshot["values"] == (1.0, 0.0)
+    assert snapshot["factor_ids"] == (
+        "target:1:2",
+        "target:1:4",
+        "matching_progress",
+        "deadlock_free",
+    )
+    assert snapshot["values"] == pytest.approx((1.0, 0.0, 8 / 9, 1.0))
+    assert snapshot["schema_version"] == "exact.sokoban.progress.v2"
+
+
+def test_sokoban_matching_progress_increases_as_box_approaches_target():
+    fixed = np.array(
+        [
+            [0, 0, 0, 0, 0],
+            [0, 1, 1, 2, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 1, 1, 0],
+            [0, 0, 0, 0, 0],
+        ]
+    )
+    far_state = fixed.copy()
+    far_state[3, 1] = 4
+    near_state = fixed.copy()
+    near_state[2, 2] = 4
+    factor_index = sokoban_factor_snapshot(fixed, far_state)["factor_ids"].index("matching_progress")
+    far_progress = sokoban_factor_snapshot(fixed, far_state)["values"][factor_index]
+    near_progress = sokoban_factor_snapshot(fixed, near_state)["values"][factor_index]
+    assert near_progress > far_progress
+
+
+def test_sokoban_deadlock_factor_ignores_boxes_already_on_target():
+    fixed = np.array(
+        [
+            [0, 0, 0, 0, 0],
+            [0, 1, 1, 2, 0],
+            [0, 1, 1, 1, 0],
+            [0, 1, 1, 1, 0],
+            [0, 0, 0, 0, 0],
+        ]
+    )
+    corner_state = fixed.copy()
+    corner_state[1, 1] = 4
+    solved_state = fixed.copy()
+    solved_state[1, 3] = 3
+    deadlock_index = sokoban_factor_snapshot(fixed, corner_state)["factor_ids"].index("deadlock_free")
+    assert sokoban_factor_snapshot(fixed, corner_state)["values"][deadlock_index] == 0.0
+    assert sokoban_factor_snapshot(fixed, solved_state)["values"][deadlock_index] == 1.0
+
+
+def test_sokoban_probe_rejects_box_target_count_mismatch():
+    fixed = np.array([[0, 0, 0], [0, 2, 0], [0, 0, 0]])
+    with pytest.raises(ValueError, match="0 boxes for 1 targets"):
+        sokoban_factor_snapshot(fixed, fixed.copy())
 
 
 def test_alfworld_goal_probe_is_available_from_sparse_info():
