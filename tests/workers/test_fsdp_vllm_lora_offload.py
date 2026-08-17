@@ -7,9 +7,10 @@ import torch
 pytest.importorskip("peft")
 pytest.importorskip("vllm")
 
+from peft.utils import save_and_load as peft_save
+
 from verl.utils.debug import performance
 from verl.workers.sharding_manager import fsdp_vllm
-from peft.utils import save_and_load as peft_save
 
 
 class _FakeDevice:
