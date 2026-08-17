@@ -48,27 +48,19 @@ Task: {task_description}
 Recent interaction history ({history_length} of {step_count} prior calls):
 {action_history}
 
+Current result:
+{current_observation}
+
 Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
-The latest Result above is current. After the app list, inspect API descriptions
-for the task-relevant app. `show_api_doc` requires both an app and an exact API
-name from that list. After reading an API document, call that documented API
-next; do not inspect the same list or document twice.
-
-Email and phone identify the supervisor; they are never access tokens. If an
-API requires `access_token`, inspect and call the supervisor's documented
-`show_account_passwords` API, inspect and call the task app's `login` API, and
-copy the returned access token. Documentation and execution are separate calls:
+Use only API names learned from results. Never guess an API or use the literal
+placeholders `app_name` and `api_name`. To inspect documentation, use:
+{{"app":"api_docs","api":"show_api_descriptions","arguments":{{"app_name":"spotify"}}}}
+then, with a real returned API name:
 {{"app":"api_docs","api":"show_api_doc","arguments":{{"app_name":"supervisor","api_name":"show_account_passwords"}}}}
-{{"app":"supervisor","api":"show_account_passwords","arguments":{{}}}}
-
-Use only exact API names and arguments learned from results. On an error, make a
-different corrective call instead of repeating or guessing. Call
-`supervisor.complete_task` only after successful task-app calls prove the task
-is complete. Its arguments may contain only documented `answer` and `status`
-keys--never `task`, `user`, `action`, `api`, or nested `arguments`. An answer
-sentence does not perform an action task.
-
-Never emit reasoning, tags, Markdown fences, or Python.
+Replace the argument values with relevant names shown in the latest result.
+If the last result is an error, inspect documentation instead of guessing.
+Never emit reasoning, tags, Markdown fences, or Python. Call the documented
+supervisor.complete_task API only when the task is finished.
 """
 
 
