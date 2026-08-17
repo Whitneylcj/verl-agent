@@ -33,7 +33,7 @@ def appworld_json_auth_guidance(prior_actions) -> str:
     required_calls = (
         (
             {"app": "api_docs", "api": "show_api_descriptions", "arguments": {"app_name": "supervisor"}},
-            "Authentication bootstrap: first learn the supervisor APIs. Copy this exact JSON object:",
+            "MANDATORY NEXT ACTION: first learn the supervisor APIs. Copy this exact JSON object and do not choose a task app yet:",
             '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
         ),
         (
@@ -42,12 +42,12 @@ def appworld_json_auth_guidance(prior_actions) -> str:
                 "api": "show_api_doc",
                 "arguments": {"app_name": "supervisor", "api_name": "show_account_passwords"},
             },
-            "Authentication bootstrap: now inspect the credential API schema. Copy this exact JSON object:",
+            "MANDATORY NEXT ACTION: inspect the credential API schema. Copy this exact JSON object and do nothing else:",
             '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}',
         ),
         (
             {"app": "supervisor", "api": "show_account_passwords", "arguments": {}},
-            "Authentication bootstrap: now fetch the supervisor's app credentials. Copy this exact JSON object:",
+            "MANDATORY NEXT ACTION: fetch the supervisor's app credentials. Copy this exact JSON object and do nothing else:",
             '{"app":"supervisor","api":"show_account_passwords","arguments":{}}',
         ),
     )
@@ -98,19 +98,18 @@ Recent interaction history ({history_length} of {step_count} prior calls):
 Current result:
 {current_observation}
 
-{auth_guidance}
-
 Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
 Use only API names learned from results. Never guess an API or use the literal
-placeholders `app_name` and `api_name`. To inspect documentation, use:
-{{"app":"api_docs","api":"show_api_descriptions","arguments":{{"app_name":"spotify"}}}}
-then, with a real returned API name:
-{{"app":"api_docs","api":"show_api_doc","arguments":{{"app_name":"supervisor","api_name":"show_account_passwords"}}}}
-Replace the argument values with relevant names shown in the latest result.
+placeholders `app_name` and `api_name`. Documentation calls use
+api_docs.show_api_descriptions and api_docs.show_api_doc; fill their arguments
+with actual app and API names already shown in the task or results.
 Never call a protected application API before logging in. If the last result
 is any other error, inspect its exact API documentation instead of guessing.
 Never emit reasoning, tags, Markdown fences, or Python. Call the documented
 supervisor.complete_task API only when the task is finished.
+
+NEXT-ACTION CONSTRAINT (this overrides every other possible next call):
+{auth_guidance}
 """
 
 
