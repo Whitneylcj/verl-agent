@@ -21,10 +21,10 @@ def sokoban_projection(actions: List[str]):
     """
     A function to process the actions.
     actions: the list of actions to be processed, it is a list of strings.
-    Expected format:
-        <think>some reasoning...</think><action>up/down/left/right/still</action>
+    Reasoning text and wrappers may surround the action, but execution requires
+    exactly one <action>up/down/left/right</action> tag.
     Sokoban action mappings:
-    - 0: Still (Invalid Action)
+    - 0: Still (projection fallback for an invalid action)
     - 1: Up
     - 2: Down
     - 3: Left

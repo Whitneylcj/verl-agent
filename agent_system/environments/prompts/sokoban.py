@@ -45,7 +45,8 @@ Your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the grid literally and do not invent boxes or targets. Reasoning is optional and may appear before the action.
+Read the grid literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
 Output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """
 
@@ -81,7 +82,8 @@ You are now at step {current_step} and your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the grid literally and do not invent boxes or targets. Reasoning is optional and may appear before the action.
+Read the grid literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
 Output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """
 
@@ -108,6 +110,7 @@ Your current observation is shown in the image: <image>
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the image literally and do not invent boxes or targets. Reasoning is optional and may appear before the action.
+Read the image literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
 Output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """

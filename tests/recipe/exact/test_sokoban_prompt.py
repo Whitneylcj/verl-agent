@@ -5,9 +5,11 @@ from agent_system.environments.prompts.sokoban import (
 )
 
 
-def test_sokoban_prompts_make_reasoning_optional_and_require_action_tag():
+def test_sokoban_prompts_require_brief_spatial_reasoning_and_action_tag():
     for template in (SOKOBAN_TEMPLATE, SOKOBAN_TEMPLATE_NO_HIS, SOKOBAN_VISUAL_TEMPLATE):
-        assert "Reasoning is optional" in template
+        assert "Number rows top-to-bottom and columns left-to-right" in template
+        assert "Before the action, write 1-3 short sentences" in template
+        assert "intended useful box push" in template
         assert "within <action> and </action> tags" in template
         assert "only required executable portion" in template
 
