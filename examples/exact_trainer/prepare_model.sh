@@ -50,6 +50,12 @@ prepare_args=(
 if [[ -n "${MODEL_WEIGHT_SHA256:-}" ]]; then
   prepare_args+=(--expected-weight-sha256 "model.safetensors=${MODEL_WEIGHT_SHA256}")
 fi
+if [[ -n "${MODEL_WEIGHT_HASHES:-}" ]]; then
+  IFS=',' read -r -a weight_hashes <<< "${MODEL_WEIGHT_HASHES}"
+  for weight_hash in "${weight_hashes[@]}"; do
+    prepare_args+=(--expected-weight-sha256 "${weight_hash}")
+  done
+fi
 python3 -m recipe.exact.prepare_model "${prepare_args[@]}"
 
 resolved_snapshot=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["resolved_snapshot"])' "${manifest_path}")

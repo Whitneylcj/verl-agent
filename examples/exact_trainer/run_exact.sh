@@ -159,7 +159,12 @@ export TENSORBOARD_DIR=${TENSORBOARD_DIR:-${run_output_dir}/tensorboard}
 model_overrides=()
 case "${model_path}" in
   *[Qq][Ww][Ee][Nn]3*)
-    model_overrides+=("+data.apply_chat_template_kwargs.enable_thinking=False")
+    model_overrides+=(
+      "+data.apply_chat_template_kwargs.enable_thinking=False"
+      "actor_rollout_ref.rollout.temperature=${QWEN3_TEMPERATURE:-0.7}"
+      "actor_rollout_ref.rollout.top_p=${QWEN3_TOP_P:-0.8}"
+      "actor_rollout_ref.rollout.top_k=${QWEN3_TOP_K:-20}"
+    )
     ;;
 esac
 

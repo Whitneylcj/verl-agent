@@ -9,6 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUN_EXACT = REPO_ROOT / "examples" / "exact_trainer" / "run_exact.sh"
 LAUNCH_MANAGED = REPO_ROOT / "examples" / "exact_trainer" / "launch_managed.sh"
+PREPARE_MODEL = REPO_ROOT / "examples" / "exact_trainer" / "prepare_model.sh"
 
 
 def _run_dir(environment: str, **extra_env: str) -> str:
@@ -74,3 +75,17 @@ def test_appworld_checks_required_service_capacity_before_training() -> None:
     launcher = RUN_EXACT.read_text()
     assert "required_appworld_services=$((train_size * group_size + validation_size))" in launcher
     assert "python3 -m recipe.exact.check_appworld_services" in launcher
+
+
+def test_qwen3_uses_non_thinking_sampling_defaults() -> None:
+    launcher = RUN_EXACT.read_text()
+    assert "+data.apply_chat_template_kwargs.enable_thinking=False" in launcher
+    assert "actor_rollout_ref.rollout.temperature=${QWEN3_TEMPERATURE:-0.7}" in launcher
+    assert "actor_rollout_ref.rollout.top_p=${QWEN3_TOP_P:-0.8}" in launcher
+    assert "actor_rollout_ref.rollout.top_k=${QWEN3_TOP_K:-20}" in launcher
+
+
+def test_model_preparation_accepts_sharded_weight_hashes() -> None:
+    launcher = PREPARE_MODEL.read_text()
+    assert "MODEL_WEIGHT_HASHES" in launcher
+    assert 'prepare_args+=(--expected-weight-sha256 "${weight_hash}")' in launcher

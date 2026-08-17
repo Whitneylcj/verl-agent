@@ -80,9 +80,12 @@ comparison.
 `MODEL_PATH` may be a Hugging Face model ID or a resolved local snapshot. The
 launcher derives a distinct output tag from its basename; set `MODEL_TAG` when
 two checkpoints share a basename. Qwen3 model IDs automatically disable the
-thinking chat-template mode used by the repository's Qwen3 agent recipes. This
-is only a compatibility setting: every new model family still requires a
-tokenizer, action-format, Transformers, and vLLM smoke test before training.
+thinking chat-template mode used by the repository's Qwen3 agent recipes and
+use the official non-thinking sampling defaults (`temperature=0.7`,
+`top_p=0.8`, `top_k=20`); each can be overridden with the corresponding
+`QWEN3_*` variable. This is only a compatibility setting: every new model
+family still requires a tokenizer, action-format, Transformers, and vLLM smoke
+test before training.
 
 After download authorization, prepare the pinned default model and exercise
 both inference backends with:
@@ -108,7 +111,9 @@ For the pinned default Qwen model, the preparation gate requires the official
 `model.safetensors` SHA-256 and records the hash, byte size, ModelScope source
 revision, requested Hugging Face revision, tokenizer class, and resolved local
 snapshot in the manifest. A mirror download without an expected weight hash is
-rejected for other models.
+rejected for other models. For a sharded checkpoint, pass the official LFS
+hashes as comma-separated `NAME=SHA256` pairs in `MODEL_WEIGHT_HASHES`; the
+manifest gate requires them to cover every shard exactly.
 
 Keep the first paid run to one conservatively reserved rollout batch. For a
 Sokoban batch with two prompts, two trajectories per prompt, and 15 steps:
