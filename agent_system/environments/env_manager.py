@@ -214,8 +214,13 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         return {'text': full_text_obs, 'image': image_obs, 'anchor': text_obs}, infos
     
     def step(self, text_actions: List[str]):
+        from agent_system.environments.env_package.alfworld.projection import (
+            alfworld_response_syntax_valid,
+        )
+
+        syntax_valids = [alfworld_response_syntax_valid(response) for response in text_actions]
         action_pools = [list(pool) for pool in self.envs.get_admissible_commands]
-        actions, valids = self.projection_f(text_actions, action_pools)
+        actions, _ = self.projection_f(text_actions, action_pools)
         execution_valids = [
             str(action).strip().lower() in {str(candidate).strip().lower() for candidate in pool}
             for action, pool in zip(actions, action_pools)
@@ -231,7 +236,7 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         # Keep response syntax separate from whether the projected command was
         # executable in the pre-step ALFWorld state.
         for i, info in enumerate(infos):
-            syntax_valid = bool(valids[i])
+            syntax_valid = bool(syntax_valids[i])
             execution_valid = bool(execution_valids[i])
             info['is_action_syntax_valid'] = to_numpy(syntax_valid)
             info['is_action_execution_valid'] = to_numpy(execution_valid)

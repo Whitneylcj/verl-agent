@@ -10,6 +10,7 @@ assert _SPEC is not None and _SPEC.loader is not None
 _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 alfworld_projection = _MODULE.alfworld_projection
+alfworld_response_syntax_valid = _MODULE.alfworld_response_syntax_valid
 
 
 def test_alfworld_projection_requires_an_admissible_action():
@@ -50,3 +51,19 @@ def test_alfworld_projection_accepts_qwen_thinking_alias():
 
     assert actions == ["go to fridge 1"]
     assert valids == [1]
+
+
+def test_alfworld_syntax_is_independent_of_admissibility():
+    response = "<thinking>Try the cabinet.</thinking><action>open cabinet 9</action>"
+
+    actions, valids = alfworld_projection([response], [["look"]])
+
+    assert alfworld_response_syntax_valid(response)
+    assert actions == ["open cabinet 9"]
+    assert valids == [0]
+
+
+def test_alfworld_syntax_rejects_multiple_action_blocks():
+    response = "<think>Choose one.</think><action>look</action><action>inventory</action>"
+
+    assert not alfworld_response_syntax_valid(response)
