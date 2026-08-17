@@ -30,30 +30,32 @@ def load_available_ports(port_file="appworld_ports.ports"):
     port_file = os.environ.get("APPWORLD_PORT_FILE", port_file)
     if not os.path.exists(port_file):
         raise FileNotFoundError(f"Port file {port_file} does not exist. Please run the service startup script first.")
-    
+
     ports = []
     with open(port_file) as f:
         for line in f:
             line = line.strip()
             if line and line.isdigit():
                 ports.append(int(line))
-    
+
     if not ports:
         raise ValueError(f"No valid ports found in port file {port_file}.")
-    
+
     return ports
+
 
 class AppWorldWorker:
     """
     Ray Actor that holds an instance of AppWorld and operates the environment
     based on method calls from the main process.
     """
+
     def __init__(self, worker_id, max_interactions, port):
         self.env = None
         self.current_step_count = 0
         self.max_interactions = max_interactions
         self.worker_id = worker_id
-        
+
         self.url = f"http://127.0.0.1:{port}"
         self._exact_factor_ids = None
         self._exact_snapshot = None
@@ -92,14 +94,14 @@ class AppWorldWorker:
             factor_reads = compile_appworld_factor_reads(
                 ground_truth.evaluation_code,
                 all_resources,
+                known_values={
+                    "public_data": ground_truth.public_data,
+                    "private_data": ground_truth.private_data,
+                    "main_user": self.env.task.supervisor,
+                },
             )
-            read_sets = {
-                factor_id: tuple(factor_reads.read_sets.get(factor_id, all_resources))
-                for factor_id in factor_ids
-            }
-            opaque_factor_ids = set(factor_reads.opaque_factor_ids) | (
-                set(factor_ids) - set(factor_reads.read_sets)
-            )
+            read_sets = {factor_id: tuple(factor_reads.read_sets.get(factor_id, all_resources)) for factor_id in factor_ids}
+            opaque_factor_ids = set(factor_reads.opaque_factor_ids) | (set(factor_ids) - set(factor_reads.read_sets))
         except (SyntaxError, TypeError, ValueError) as error:
             read_sets = {factor_id: all_resources for factor_id in factor_ids}
             opaque_factor_ids = set(factor_ids)
@@ -139,7 +141,7 @@ class AppWorldWorker:
 
         self.env = AppWorld(
             task_id=task_id,
-            experiment_name=f'default_{self.worker_id}',
+            experiment_name=f"default_{self.worker_id}",
             remote_environment_url=self.url,
         )
 
@@ -204,16 +206,8 @@ class AppWorldEnvs:
     - Creates multiple Ray actors, each holding a separate AppWorld instance.
     - Implements Gym-style interfaces such as step() / reset() / close().
     """
-    def __init__(self, 
-                 dataset_name,
-                 max_interactions,
-                 seed,
-                 env_num,
-                 group_n,
-                 start_server_id,
-                 resources_per_worker,
-                 port_file="appworld_ports.ports"
-                 ):
+
+    def __init__(self, dataset_name, max_interactions, seed, env_num, group_n, start_server_id, resources_per_worker, port_file="appworld_ports.ports"):
         super().__init__()
 
         self.dataset_name = dataset_name
@@ -222,20 +216,17 @@ class AppWorldEnvs:
         self.group_n = group_n
         self.num_processes = env_num * group_n
         self.task_ids = load_task_ids(dataset_name)
-   
+
         if self.env_num > len(self.task_ids):
             raise ValueError(f"Env_num ({self.env_num}) exceeds available task_ids in '{self.dataset_name}' ({len(self.task_ids)}). Please reducing env_num to {len(self.task_ids)}.")
-            
+
         all_ports = load_available_ports(port_file)
 
-        self.available_ports = all_ports[start_server_id:start_server_id + self.num_processes]
+        self.available_ports = all_ports[start_server_id : start_server_id + self.num_processes]
 
         # Check if we have enough ports
         if len(self.available_ports) < self.num_processes:
-            raise ValueError(
-                f"Need {self.num_processes} ports, but only {len(self.available_ports)} available ports. "
-                f"Please ensure enough service instances are started."
-            )
+            raise ValueError(f"Need {self.num_processes} ports, but only {len(self.available_ports)} available ports. Please ensure enough service instances are started.")
 
         # Initialize Ray if not already initialized
         if not ray.is_initialized():
@@ -246,18 +237,14 @@ class AppWorldEnvs:
         self.workers = []
         for i in range(self.num_processes):
             port = self.available_ports[i]
-            worker = env_worker.remote(
-                worker_id=start_server_id + i,
-                max_interactions=self.max_interactions,
-                port=port
-            )
+            worker = env_worker.remote(worker_id=start_server_id + i, max_interactions=self.max_interactions, port=port)
             self.workers.append(worker)
 
     def step(self, actions):
         """
-        actions: Must be a list with length equal to self.num_processes, 
+        actions: Must be a list with length equal to self.num_processes,
         each sent to the corresponding worker.
-        
+
         Return format follows Gym's step() convention:
             observations, rewards, dones, infos
         """
@@ -271,7 +258,7 @@ class AppWorldEnvs:
 
         # Collect results
         results = ray.get(futures)
-        
+
         obs_list = []
         reward_list = []
         done_list = []
@@ -287,7 +274,7 @@ class AppWorldEnvs:
 
     def reset(self):
         """
-        Reset all worker environments simultaneously, 
+        Reset all worker environments simultaneously,
         returning each environment's initial observation and info.
         """
         # randomly select self.env_num task_id from self.task_ids
@@ -303,7 +290,7 @@ class AppWorldEnvs:
 
         # Collect results
         results = ray.get(futures)
-        
+
         obs_list = []
         info_list = []
 
@@ -326,10 +313,10 @@ class AppWorldEnvs:
         for worker in self.workers:
             future = worker.close.remote()
             futures.append(future)
-        
+
         # Wait for all workers to close
         ray.get(futures)
-        
+
         # Shutdown Ray actors
         for worker in self.workers:
             ray.kill(worker)
@@ -338,24 +325,18 @@ class AppWorldEnvs:
         """Implement this if visualization is needed."""
         pass
 
-def build_appworld_envs(dataset_name="train",
-                        max_interactions=50,
-                        seed=0,
-                        env_num=1, 
-                        group_n=1,
-                        start_server_id=0,
-                        resources_per_worker=None,
-                        ):
+
+def build_appworld_envs(
+    dataset_name="train",
+    max_interactions=50,
+    seed=0,
+    env_num=1,
+    group_n=1,
+    start_server_id=0,
+    resources_per_worker=None,
+):
 
     if resources_per_worker is None:
         resources_per_worker = {"num_cpus": 0.1}
 
-    return AppWorldEnvs(
-        dataset_name=dataset_name,
-        max_interactions=max_interactions,
-        seed=seed,
-        env_num=env_num,
-        group_n=group_n,
-        start_server_id=start_server_id,
-        resources_per_worker=resources_per_worker
-    )
+    return AppWorldEnvs(dataset_name=dataset_name, max_interactions=max_interactions, seed=seed, env_num=env_num, group_n=group_n, start_server_id=start_server_id, resources_per_worker=resources_per_worker)

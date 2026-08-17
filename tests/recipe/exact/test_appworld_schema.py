@@ -53,6 +53,14 @@ def test_compile_appworld_factor_reads_tracks_dataflow_and_fails_closed():
     assert compiled.read_sets[appworld_factor_id("only allowed models changed")] == tuple(sorted(resources))
     assert compiled.read_sets[appworld_factor_id("dynamic model lookup")] == tuple(sorted(resources))
 
+    task_specific = compile_appworld_factor_reads(
+        EVALUATION_CODE,
+        resources,
+        known_values={"private_data": {"model_suffix": "GlobalTextMessage"}},
+    )
+    assert appworld_factor_id("dynamic model lookup") not in set(task_specific.opaque_factor_ids)
+    assert task_specific.read_sets[appworld_factor_id("dynamic model lookup")] == (appworld_model_resource("phone", "GlobalTextMessage"),)
+
 
 def _registry(version="0.2.0"):
     return build_appworld_effect_registry(

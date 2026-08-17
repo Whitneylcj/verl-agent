@@ -102,6 +102,10 @@ def audit_appworld_schema(
             compiled = compile_appworld_factor_reads(
                 ground_truth.evaluation_code,
                 all_resources,
+                known_values={
+                    "public_data": ground_truth.public_data,
+                    "private_data": ground_truth.private_data,
+                },
             )
             expected_ids = {appworld_factor_id(str(entry["requirement"])) for entry in (ground_truth.test_data or [])}
             actual_ids = set(compiled.read_sets)

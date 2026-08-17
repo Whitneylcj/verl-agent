@@ -63,30 +63,107 @@ def _attribute_chain(node: ast.AST) -> tuple[str, ...] | None:
     return tuple(reversed(parts))
 
 
-def _constant_string(node: ast.AST, constants: Mapping[str, str]) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+def _literal_value(
+    node: ast.AST,
+    constants: Mapping[str, str],
+    known_values: Mapping[str, Any],
+) -> Any:
+    if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.Name):
-        return constants.get(node.id)
+        if node.id in constants:
+            return constants[node.id]
+        return known_values.get(node.id)
+    if isinstance(node, ast.Attribute):
+        base = _literal_value(node.value, constants, known_values)
+        if base is None:
+            return None
+        if isinstance(base, Mapping):
+            return base.get(node.attr)
+        return getattr(base, node.attr, None)
+    if isinstance(node, ast.IfExp):
+        condition = _literal_value(node.test, constants, known_values)
+        if isinstance(condition, bool):
+            return _literal_value(
+                node.body if condition else node.orelse,
+                constants,
+                known_values,
+            )
+        return None
+    if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+        left = _literal_value(node.left, constants, known_values)
+        right = _literal_value(node.comparators[0], constants, known_values)
+        if left is None or right is None:
+            return None
+        if isinstance(node.ops[0], ast.Eq):
+            return left == right
+        if isinstance(node.ops[0], ast.NotEq):
+            return left != right
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        operand = _literal_value(node.operand, constants, known_values)
+        return None if not isinstance(operand, bool) else not operand
+    if isinstance(node, (ast.List, ast.Tuple)):
+        values = [_literal_value(item, constants, known_values) for item in node.elts]
+        return None if any(value is None for value in values) else values
+    if isinstance(node, ast.Dict):
+        keys = [_literal_value(key, constants, known_values) for key in node.keys]
+        values = [_literal_value(value, constants, known_values) for value in node.values]
+        return None if any(item is None for item in (*keys, *values)) else dict(zip(keys, values))
+    if isinstance(node, ast.Subscript):
+        value = _literal_value(node.value, constants, known_values)
+        key = _literal_value(node.slice, constants, known_values)
+        try:
+            return value[key]
+        except (KeyError, IndexError, TypeError):
+            return None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _literal_value(node.left, constants, known_values)
+        right = _literal_value(node.right, constants, known_values)
+        try:
+            return left + right
+        except TypeError:
+            return None
     if isinstance(node, ast.JoinedStr):
         pieces: list[str] = []
         for value in node.values:
             if isinstance(value, ast.Constant) and isinstance(value.value, str):
                 pieces.append(value.value)
             elif isinstance(value, ast.FormattedValue):
-                resolved = _constant_string(value.value, constants)
+                resolved = _literal_value(value.value, constants, known_values)
                 if resolved is None:
                     return None
-                pieces.append(resolved)
+                pieces.append(str(resolved))
             else:
                 return None
         return "".join(pieces)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        base = _literal_value(node.func.value, constants, known_values)
+        if node.func.attr in {"title", "lower", "upper", "strip"} and isinstance(base, str):
+            return getattr(base, node.func.attr)()
+        if node.func.attr == "join" and isinstance(base, str) and len(node.args) == 1:
+            values = _literal_value(node.args[0], constants, known_values)
+            if isinstance(values, list) and all(isinstance(value, str) for value in values):
+                return base.join(values)
     return None
 
 
+def _constant_string(
+    node: ast.AST,
+    constants: Mapping[str, str],
+    known_values: Mapping[str, Any],
+) -> str | None:
+    value = _literal_value(node, constants, known_values)
+    return value if isinstance(value, str) else None
+
+
 class _EvaluatorAnalyzer:
-    def __init__(self, all_resources: Sequence[str]) -> None:
+    def __init__(
+        self,
+        all_resources: Sequence[str],
+        known_values: Mapping[str, Any],
+    ) -> None:
         self.all_resources = frozenset(all_resources)
+        self.known_values = dict(known_values)
         self.read_sets: dict[str, tuple[str, ...]] = {}
         self.opaque_factor_ids: set[str] = set()
 
@@ -119,7 +196,8 @@ class _EvaluatorAnalyzer:
                     ("models", "end"),
                 }
             ):
-                return _Facts(frozenset({appworld_model_resource(chain[2], chain[3])}))
+                resource = appworld_model_resource(chain[2], chain[3])
+                return _Facts(frozenset({resource})) if resource in self.all_resources else self._all()
             base = self.expression(node.value, facts_by_name, constants)
             return self._all() if base.unresolved_models else base
         if isinstance(node, ast.Call):
@@ -129,10 +207,11 @@ class _EvaluatorAnalyzer:
                 ("models", "changed_fields"),
                 ("models", "changed_field_names"),
             }:
-                model_name = _constant_string(node.args[0], constants) if node.args else None
+                model_name = _constant_string(node.args[0], constants, self.known_values) if node.args else None
                 if model_name and "." in model_name:
                     app_name, short_model_name = model_name.split(".", 1)
-                    return _Facts(frozenset({appworld_model_resource(app_name, short_model_name)}))
+                    resource = appworld_model_resource(app_name, short_model_name)
+                    return _Facts(frozenset({resource})) if resource in self.all_resources else self._all()
                 return self._all()
             if chain == ("models", "changed_model_names"):
                 return self._known_all()
@@ -215,7 +294,7 @@ class _EvaluatorAnalyzer:
             if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 value = statement.value
                 facts = self.expression(value, facts_by_name, constants)
-                constant = _constant_string(value, constants)
+                constant = _constant_string(value, constants, self.known_values)
                 targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
                 for target in targets:
                     self._bind_target(target, facts, constant, facts_by_name, constants)
@@ -227,7 +306,13 @@ class _EvaluatorAnalyzer:
             elif isinstance(statement, (ast.If, ast.IfExp)):
                 condition = self.expression(statement.test, facts_by_name, constants)
                 branch_scopes = []
-                for branch in (statement.body, statement.orelse):
+                literal_condition = _literal_value(
+                    statement.test,
+                    constants,
+                    self.known_values,
+                )
+                branches = (statement.body,) if literal_condition is True else (statement.orelse,) if literal_condition is False else (statement.body, statement.orelse)
+                for branch in branches:
                     branch_facts = dict(facts_by_name)
                     branch_constants = dict(constants)
                     total = total.merge(self.statements(branch, branch_facts, branch_constants))
@@ -292,6 +377,7 @@ class _EvaluatorAnalyzer:
 def compile_appworld_factor_reads(
     evaluation_code: str,
     all_model_resources: Sequence[str],
+    known_values: Mapping[str, Any] | None = None,
 ) -> AppWorldFactorReads:
     """Compile each ``with test(...)`` block to a conservative model read set."""
 
@@ -299,7 +385,10 @@ def compile_appworld_factor_reads(
     functions = [node for node in module.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "evaluate"]
     if len(functions) != 1:
         raise ValueError("AppWorld evaluator must contain exactly one evaluate function")
-    analyzer = _EvaluatorAnalyzer(tuple(sorted(set(all_model_resources))))
+    analyzer = _EvaluatorAnalyzer(
+        tuple(sorted(set(all_model_resources))),
+        known_values or {},
+    )
     analyzer.statements(functions[0].body, {}, {})
     if not analyzer.read_sets:
         raise ValueError("AppWorld evaluator contains no static test blocks")
