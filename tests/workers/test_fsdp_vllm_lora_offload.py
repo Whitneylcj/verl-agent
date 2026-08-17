@@ -36,16 +36,18 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     class _FakePeftModel:
         peft_config = {"default": SimpleNamespace(bias="none", use_dora=False)}
 
-        def named_modules(self):
-            layer = SimpleNamespace(weight=torch.ones(1, device="cpu"), bias=None)
-            return [
-                ("", self),
-                ("base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_A.default", layer),
-                ("base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_B.default", layer),
-            ]
-
     class _FakeModule:
         _fsdp_wrapped_module = _FakePeftModel()
+
+        flat_param = torch.arange(4, dtype=torch.float32)
+        flat_param._fqns = [
+            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.base_layer.weight",
+            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_A.default.weight",
+            "base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_B.default.weight",
+        ]
+        flat_param._shapes = [torch.Size([2]), torch.Size([1]), torch.Size([1])]
+        flat_param._numels = [2, 1, 1]
+        _all_handles = [SimpleNamespace(flat_param=flat_param)]
 
     class _FakeInferenceEngine:
         def wake_up(self, tags=None):

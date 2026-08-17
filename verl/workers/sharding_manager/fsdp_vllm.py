@@ -48,8 +48,8 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
-def _collect_single_rank_lora_params(wrapped_module: PeftModel) -> OrderedDict:
-    """Collect standard LoRA tensors from NO_SHARD module views without FSDP summon."""
+def _collect_single_rank_lora_params(fsdp_module: FSDP, wrapped_module: PeftModel) -> OrderedDict:
+    """Collect standard LoRA tensors from NO_SHARD flat params without FSDP summon."""
 
     from peft.utils.save_and_load import get_peft_model_state_dict
 
@@ -58,14 +58,17 @@ def _collect_single_rank_lora_params(wrapped_module: PeftModel) -> OrderedDict:
         raise RuntimeError("single-rank LoRA staging currently requires bias='none' and use_dora=False")
 
     raw_state = OrderedDict()
-    for module_name, submodule in wrapped_module.named_modules():
-        normalized_name = module_name.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
-        if "lora_" not in normalized_name:
-            continue
-        for tensor_name in ("weight", "bias"):
-            tensor = getattr(submodule, tensor_name, None)
-            if torch.is_tensor(tensor):
-                raw_state[f"{normalized_name}.{tensor_name}"] = tensor
+    for handle in fsdp_module._all_handles:
+        flat_param = handle.flat_param
+        offset = 0
+        for fqn, shape, numel in zip(flat_param._fqns, flat_param._shapes, flat_param._numels, strict=True):
+            numel = int(numel)
+            if "lora_" in fqn:
+                normalized_name = fqn.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
+                raw_state[normalized_name] = flat_param[offset : offset + numel].view(shape)
+            offset += numel
+        if offset != flat_param.numel():
+            raise RuntimeError("single-rank flat parameter contains unexpected padding")
 
     params = get_peft_model_state_dict(wrapped_module, state_dict=raw_state)
     return OrderedDict((name, param.detach().cpu()) for name, param in params.items())
@@ -138,7 +141,7 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         from peft.utils.save_and_load import get_peft_model_state_dict
 
         if fsdp_version(self.module) > 0 and getattr(self.module, "world_size", None) == 1:
-            params = _collect_single_rank_lora_params(wrapped_module)
+            params = _collect_single_rank_lora_params(self.module, wrapped_module)
         elif fsdp_version(self.module) > 0:
             # Post-update staging must never summon the full base model: on a
             # single-rank NO_SHARD actor that can leave the entire 4B model
