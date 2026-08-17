@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -8,6 +9,7 @@ pytest.importorskip("vllm")
 
 from verl.utils.debug import performance
 from verl.workers.sharding_manager import fsdp_vllm
+from peft.utils import save_and_load as peft_save
 
 
 class _FakeDevice:
@@ -31,7 +33,15 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     events = []
 
     class _FakePeftModel:
-        peft_config = {"default": object()}
+        peft_config = {"default": SimpleNamespace(bias="none", use_dora=False)}
+
+        def named_modules(self):
+            layer = SimpleNamespace(weight=torch.ones(1, device="cpu"), bias=None)
+            return [
+                ("", self),
+                ("base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_A.default", layer),
+                ("base_model.model.layers.0._fsdp_wrapped_module.q_proj.lora_B.default", layer),
+            ]
 
     class _FakeModule:
         _fsdp_wrapped_module = _FakePeftModel()
@@ -75,6 +85,7 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
         lambda module: events.append("offload_actor"),
     )
     monkeypatch.setattr(fsdp_vllm, "vllm_version", "0.11.0")
+    monkeypatch.setattr(peft_save, "get_peft_model_state_dict", lambda model, state_dict=None: state_dict)
 
     manager.__enter__()
 
@@ -93,6 +104,16 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
 
     events.clear()
     manager.layered_summon = False
+    manager.module.world_size = 1
+    monkeypatch.setattr(
+        fsdp_vllm,
+        "layered_summon_lora_params",
+        lambda module: pytest.fail("single-rank staging must not summon FSDP params"),
+    )
     manager.stage_updated_weights()
+    assert set(manager._staged_lora_params) == {
+        "base_model.model.layers.0.q_proj.lora_A.default.weight",
+        "base_model.model.layers.0.q_proj.lora_B.default.weight",
+    }
     manager.__enter__()
     assert events == ["wake_weights", "update_lora", "wake_kv_cache"]

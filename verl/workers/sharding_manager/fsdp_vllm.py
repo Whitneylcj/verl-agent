@@ -48,6 +48,29 @@ logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
+def _collect_single_rank_lora_params(wrapped_module: PeftModel) -> OrderedDict:
+    """Collect standard LoRA tensors from NO_SHARD module views without FSDP summon."""
+
+    from peft.utils.save_and_load import get_peft_model_state_dict
+
+    config = wrapped_module.peft_config.get("default", None)
+    if config is None or config.bias != "none" or getattr(config, "use_dora", False):
+        raise RuntimeError("single-rank LoRA staging currently requires bias='none' and use_dora=False")
+
+    raw_state = OrderedDict()
+    for module_name, submodule in wrapped_module.named_modules():
+        normalized_name = module_name.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
+        if "lora_" not in normalized_name:
+            continue
+        for tensor_name in ("weight", "bias"):
+            tensor = getattr(submodule, tensor_name, None)
+            if torch.is_tensor(tensor):
+                raw_state[f"{normalized_name}.{tensor_name}"] = tensor
+
+    params = get_peft_model_state_dict(wrapped_module, state_dict=raw_state)
+    return OrderedDict((name, param.detach().cpu()) for name, param in params.items())
+
+
 class FSDPVLLMShardingManager(BaseShardingManager):
     @check_cuda_is_available()
     def __init__(self, module: FSDP, inference_engine: LLM, model_config, full_params: bool = False, device_mesh: DeviceMesh = None, offload_param: bool = False, load_format: str = "dummy_hf", layered_summon: bool = True):
@@ -114,7 +137,9 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             return
         from peft.utils.save_and_load import get_peft_model_state_dict
 
-        if fsdp_version(self.module) > 0:
+        if fsdp_version(self.module) > 0 and getattr(self.module, "world_size", None) == 1:
+            params = _collect_single_rank_lora_params(wrapped_module)
+        elif fsdp_version(self.module) > 0:
             # Post-update staging must never summon the full base model: on a
             # single-rank NO_SHARD actor that can leave the entire 4B model
             # resident and overlap vLLM's KV-cache wake-up.  The layered helper
