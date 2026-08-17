@@ -274,7 +274,9 @@ algorithm:
       # estimator and its matched baselines.
       enabled: False
       output_dir: outputs/exact/${trainer.experiment_name}
-      residual_warning_ratio: 0.95
+      # Paper stop-rule precursor: investigate sustained >0.8 together with
+      # credit/gradient variance before extending a temporal-only method.
+      residual_warning_ratio: 0.8
       rollout_sample_count: 8
       # Persist useful rollout context without leaking AppWorld supervisor PII
       # or accidentally copied credentials.

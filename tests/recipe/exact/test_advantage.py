@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import torch
 
 from recipe.exact.advantage import compute_exact_advantage, fit_delayed_alpha_from_traces
@@ -41,6 +42,8 @@ def _test_batch():
             "exact_step_id": np.array([1, 2, 1, 1]),
             "episode_rewards": np.array([3.0, 3.0, 2.0, 3.0]),
             "exact_padding": np.array([False, False, False, True]),
+            "exact_probe_seconds": np.array([0.1, 0.2, 0.3, 99.0]),
+            "exact_probe_count": np.array([2.0, 2.0, 2.0, 99.0]),
             "exact_factor_pre": np.array(
                 [_snapshot(0, (0, 0)), _snapshot(1, (1, 0)), _snapshot(0, (0, 0)), _snapshot(0, (0, 0))],
                 dtype=object,
@@ -86,7 +89,40 @@ def test_exact_advantage_is_padding_safe_and_trajectory_normalized():
     assert metrics["exact/trajectory_count"] == 2
     assert metrics["exact/padding_rows"] == 1
     assert metrics["exact/trajectory_scale"] == 2
+    assert np.isclose(metrics["exact/probe_seconds"], 0.6)
+    assert metrics["exact/verifier_snapshot_count"] == 6
+    assert np.isclose(metrics["exact/probe_seconds_per_snapshot"], 0.1)
     assert len(traces) == 2
+
+
+def test_scaled_seq_mean_loss_equals_trajectory_mean_span_token_sum():
+    pytest.importorskip("ray")
+    from verl.trainer.ppo.core_algos import agg_loss
+
+    data, _, _ = compute_exact_advantage(
+        _test_batch(),
+        config={
+            "mode": "graph",
+            "force_residual_descendant": False,
+            "potential": {"weights": {"a_value": 1.0, "b_value": 2.0}},
+        },
+    )
+    token_score_terms = torch.tensor(
+        [
+            [0.1, 0.2, 0.0],
+            [0.3, 0.0, 0.0],
+            [0.4, 0.5, 0.6],
+            [9.0, 9.0, 0.0],
+        ]
+    )
+    actual = agg_loss(
+        loss_mat=token_score_terms * data.batch["advantages"],
+        loss_mask=data.batch["response_mask"],
+        loss_agg_mode="seq-mean-token-sum",
+    )
+    raw_credits = data.batch["advantages"] / 2.0
+    expected = torch.sum(token_score_terms[:3] * raw_credits[:3]) / 2.0
+    torch.testing.assert_close(actual, expected)
 
 
 def test_missing_schema_uses_all_to_all_fallback():

@@ -23,6 +23,9 @@ the update instead of silently falling back to a biased estimator.
 The hard graph estimator is unbiased when its route is conservative. PPO ratio
 clipping, KL regularization, and repeated optimizer steps are practical training
 choices and are reported separately from the raw on-policy identity.
+Programmatic 0–1 factors use the normalized potential scale `1.0` by default;
+set `POTENTIAL_SCALE` only as a declared ablation, never as an implicit tuning
+change between matched runs.
 
 ## Validation order
 
@@ -185,7 +188,8 @@ episode length, KL/clip fraction, entropy, gradient norm, response clipping,
 throughput, and validation metrics. For EXACT also track
 `exact/conservation_error_max`, `exact/residual_ratio_mean`,
 `exact/cone_density_mean`, `exact/schema_fallback_rate`, credit quantiles,
-and factor-progress rates. Before starting each rollout batch, the launcher
+factor-progress rates, verifier snapshot cost, and active GPU-hours. Before
+starting each rollout batch, the launcher
 reserves its worst-case usage and stops conservatively when the next batch could
 exceed the configured environment-step or generated-token budget.
 The underlying verl `Tracking` interface supports console, W&B, TensorBoard,

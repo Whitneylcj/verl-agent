@@ -401,11 +401,19 @@ class TrajectoryCollector:
                 exact_probe_seconds = exact_pre_probe_seconds + (
                     time.perf_counter() - exact_post_probe_started
                 )
-                batch.non_tensor_batch["exact_probe_seconds"] = np.full(
-                    batch_size,
-                    exact_probe_seconds / batch_size,
-                    dtype=np.float64,
-                )
+                active_count = int(active_masks.sum())
+                per_active_probe_seconds = exact_probe_seconds / max(active_count, 1)
+                per_active_snapshot_count = (2 * batch_size) / max(active_count, 1)
+                batch.non_tensor_batch["exact_probe_seconds"] = np.where(
+                    active_masks,
+                    per_active_probe_seconds,
+                    0.0,
+                ).astype(np.float64)
+                batch.non_tensor_batch["exact_probe_count"] = np.where(
+                    active_masks,
+                    per_active_snapshot_count,
+                    0.0,
+                ).astype(np.float64)
 
             
             if len(rewards.shape) == 2:

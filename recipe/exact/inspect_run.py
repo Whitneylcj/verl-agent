@@ -23,6 +23,8 @@ DEFAULT_METRICS = (
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
     "exact/credit_std",
+    "exact/probe_seconds_per_snapshot",
+    "exact/graph_compile_seconds",
     "actor/ppo_kl",
     "actor/pg_clipfrac",
     "actor/entropy_loss",
@@ -30,6 +32,8 @@ DEFAULT_METRICS = (
     "response_length/clip_ratio",
     "perf/time_per_step",
     "perf/throughput",
+    "perf/active_gpu_hours_per_step",
+    "training/cumulative_active_gpu_hours",
 )
 
 
@@ -194,7 +198,7 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             ),
         )
     residual_ratio = latest("exact/residual_ratio_mean")
-    if residual_ratio is not None and residual_ratio >= 0.95:
+    if residual_ratio is not None and residual_ratio >= 0.8:
         add(
             "weak_exact_factor_explanation",
             "medium",

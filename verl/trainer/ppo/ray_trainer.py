@@ -974,6 +974,7 @@ class RayPPOTrainer:
             {
                 "cumulative_env_steps": self.cumulative_env_steps,
                 "cumulative_generated_tokens": self.cumulative_generated_tokens,
+                "cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
             },
             os.path.join(local_global_step_folder, "trainer_budget.pt"),
         )
@@ -1041,6 +1042,9 @@ class RayPPOTrainer:
             trainer_budget = torch.load(trainer_budget_path, weights_only=False)
             self.cumulative_env_steps = int(trainer_budget["cumulative_env_steps"])
             self.cumulative_generated_tokens = int(trainer_budget["cumulative_generated_tokens"])
+            self.cumulative_active_gpu_hours = float(
+                trainer_budget.get("cumulative_active_gpu_hours", 0.0)
+            )
         elif any(
             self.config.trainer.get(limit, None) is not None
             and int(self.config.trainer.get(limit)) > 0
@@ -1127,6 +1131,7 @@ class RayPPOTrainer:
         self.global_steps = 0
         self.cumulative_env_steps = 0
         self.cumulative_generated_tokens = 0
+        self.cumulative_active_gpu_hours = 0.0
 
         # load checkpoint before doing anything
         self._load_checkpoint()
@@ -1147,6 +1152,7 @@ class RayPPOTrainer:
                 invalid_step_warning_ratio=monitor_config.invalid_step_warning_ratio,
                 initial_env_steps=self.cumulative_env_steps,
                 initial_generated_tokens=self.cumulative_generated_tokens,
+                initial_active_gpu_hours=self.cumulative_active_gpu_hours,
                 initial_step=self.global_steps,
             )
 
@@ -1185,6 +1191,7 @@ class RayPPOTrainer:
                         "training/global_step": self.global_steps - 1,
                         "training/cumulative_env_steps": self.cumulative_env_steps,
                         "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
+                        "training/cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
                     }
                     if run_observer is not None:
                         run_observer.mark_budget_reached(
@@ -1217,6 +1224,7 @@ class RayPPOTrainer:
 
                 is_last_step = self.global_steps >= self.total_training_steps
 
+                should_save_checkpoint = False
                 with _timer("step", timing_raw):
                     # generate a batch
                     with _timer("gen", timing_raw):
@@ -1511,9 +1519,37 @@ class RayPPOTrainer:
                                 last_val_metrics = val_metrics
                         metrics.update(val_metrics)
 
-                    if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
-                        with _timer("save_checkpoint", timing_raw):
-                            self._save_checkpoint()
+                    should_save_checkpoint = self.config.trainer.save_freq > 0 and (
+                        is_last_step
+                        or self.global_steps % self.config.trainer.save_freq == 0
+                    )
+
+                rollout_padding = np.asarray(
+                    batch.non_tensor_batch.get(
+                        "rollout_padding", np.zeros(len(batch), dtype=bool)
+                    ),
+                    dtype=bool,
+                )
+                non_padding_rows = torch.as_tensor(
+                    ~rollout_padding,
+                    dtype=torch.bool,
+                    device=batch.batch["response_mask"].device,
+                )
+                step_env_steps = int(non_padding_rows.sum().item())
+                step_generated_tokens = int(
+                    batch.batch["response_mask"][non_padding_rows].sum().item()
+                )
+                n_gpus = self.resource_pool_manager.get_n_gpus()
+                step_active_gpu_hours = float(timing_raw["step"] * n_gpus / 3600.0)
+                self.cumulative_env_steps += step_env_steps
+                self.cumulative_generated_tokens += step_generated_tokens
+                self.cumulative_active_gpu_hours += step_active_gpu_hours
+
+                # Save after accounting for the rollout consumed by this step,
+                # so a resumed budget cannot silently forget completed work.
+                if should_save_checkpoint:
+                    with _timer("save_checkpoint", timing_raw):
+                        self._save_checkpoint()
 
                 # training metrics
                 metrics.update(
@@ -1526,28 +1562,13 @@ class RayPPOTrainer:
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 # TODO: implement actual tflpo and theoretical tflpo
-                n_gpus = self.resource_pool_manager.get_n_gpus()
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
-
-                rollout_padding = np.asarray(
-                    batch.non_tensor_batch.get("rollout_padding", np.zeros(len(batch), dtype=bool)),
-                    dtype=bool,
-                )
-                non_padding_rows = torch.as_tensor(
-                    ~rollout_padding,
-                    dtype=torch.bool,
-                    device=batch.batch["response_mask"].device,
-                )
-                step_env_steps = int(non_padding_rows.sum().item())
-                step_generated_tokens = int(
-                    batch.batch["response_mask"][non_padding_rows].sum().item()
-                )
-                self.cumulative_env_steps += step_env_steps
-                self.cumulative_generated_tokens += step_generated_tokens
                 metrics.update(
                     {
+                        "perf/active_gpu_hours_per_step": step_active_gpu_hours,
                         "training/cumulative_env_steps": self.cumulative_env_steps,
                         "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
+                        "training/cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
                     }
                 )
 

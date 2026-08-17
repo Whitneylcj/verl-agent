@@ -320,6 +320,10 @@ def compute_exact_advantage(
     if "exact_probe_seconds" in data.non_tensor_batch:
         probe_values = np.asarray(data.non_tensor_batch["exact_probe_seconds"], dtype=np.float64)
         probe_seconds = float(probe_values[~exact_padding].sum())
+    probe_count = 0.0
+    if "exact_probe_count" in data.non_tensor_batch:
+        probe_counts = np.asarray(data.non_tensor_batch["exact_probe_count"], dtype=np.float64)
+        probe_count = float(probe_counts[~exact_padding].sum())
     metrics = {
         "exact/conservation_error_max": float(max(conservation_errors, default=0.0)),
         "exact/residual_ratio_mean": float(np.mean(residual_ratios)),
@@ -336,6 +340,8 @@ def compute_exact_advantage(
         "exact/trajectory_scale": float(trajectory_scale),
         "exact/factor_change_rate": float(changed_factor_atom_count / max(factor_atom_count, 1)),
         "exact/probe_seconds": probe_seconds,
+        "exact/verifier_snapshot_count": probe_count,
+        "exact/probe_seconds_per_snapshot": probe_seconds / probe_count if probe_count > 0 else 0.0,
         "exact/graph_compile_seconds": float(graph_compile_seconds),
         "exact/pathwise_conservation_pass": 1.0,
     }

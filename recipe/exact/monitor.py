@@ -276,6 +276,7 @@ class AgentRunObserver:
         invalid_step_warning_ratio: float = 0.2,
         initial_env_steps: int = 0,
         initial_generated_tokens: int = 0,
+        initial_active_gpu_hours: float = 0.0,
         initial_step: int = 0,
     ) -> None:
         self.output_dir = Path(output_dir).expanduser().resolve()
@@ -289,6 +290,7 @@ class AgentRunObserver:
         self.invalid_step_warning_ratio = float(invalid_step_warning_ratio)
         self.cumulative_env_steps = int(initial_env_steps)
         self.cumulative_generated_tokens = int(initial_generated_tokens)
+        self.cumulative_active_gpu_hours = float(initial_active_gpu_hours)
         self._write_heartbeat(
             status="initializing",
             step=initial_step,
@@ -372,6 +374,7 @@ class AgentRunObserver:
                 "updated_unix": time.time(),
                 "cumulative_env_steps": self.cumulative_env_steps,
                 "cumulative_generated_tokens": self.cumulative_generated_tokens,
+                "cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
                 "warnings": list(warnings),
                 "metrics": dict(metrics),
             },
@@ -474,6 +477,8 @@ class AgentRunObserver:
             self.cumulative_generated_tokens = int(float(metrics["training/cumulative_generated_tokens"]))
         else:
             self.cumulative_generated_tokens += int(float(metrics.get("exact/generated_token_count", 0)))
+        if "training/cumulative_active_gpu_hours" in metrics:
+            self.cumulative_active_gpu_hours = float(metrics["training/cumulative_active_gpu_hours"])
         payload = {"step": int(step), "recorded_unix": time.time(), "metrics": dict(metrics)}
         self._append_jsonl(self.output_dir / "metrics.jsonl", payload)
         final_warnings = list(dict.fromkeys([*warnings, *self._metric_warnings(metrics)]))

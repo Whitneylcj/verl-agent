@@ -27,6 +27,7 @@ test_freq=${TEST_FREQ:-5}
 max_env_steps=${MAX_ENV_STEPS:-10000}
 max_generated_tokens=${MAX_GENERATED_TOKENS:-1000000}
 use_invalid_action_penalty=${USE_INVALID_ACTION_PENALTY:-False}
+potential_scale=${POTENTIAL_SCALE:-1.0}
 max_steps=20
 max_prompt_length=2048
 
@@ -73,7 +74,7 @@ validation_file="${data_root}/text/test.parquet"
 common_overrides=(
   "algorithm.adv_estimator=${algorithm_name}"
   "algorithm.exact.mode=${exact_mode}"
-  "algorithm.exact.potential.scale=10.0"
+  "algorithm.exact.potential.scale=${potential_scale}"
   "data.train_files=${train_file}"
   "data.val_files=${validation_file}"
   "data.train_batch_size=${train_size}"

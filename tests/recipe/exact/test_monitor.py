@@ -120,6 +120,7 @@ def test_observer_restores_budget_counters(tmp_path):
         tmp_path,
         initial_env_steps=17,
         initial_generated_tokens=101,
+        initial_active_gpu_hours=1.25,
         initial_step=4,
     )
     observer.complete_step(5, _metrics(), [])
@@ -128,6 +129,7 @@ def test_observer_restores_budget_counters(tmp_path):
     assert heartbeat["step"] == 5
     assert heartbeat["cumulative_env_steps"] == 20
     assert heartbeat["cumulative_generated_tokens"] == 112
+    assert heartbeat["cumulative_active_gpu_hours"] == 1.25
 
 
 def test_observer_safety_stops_on_nonfinite_metric(tmp_path):
@@ -238,12 +240,14 @@ def test_observer_writes_common_baseline_rollouts_and_syncs_budgets(tmp_path):
         {
             "training/cumulative_env_steps": 7,
             "training/cumulative_generated_tokens": 53,
+            "training/cumulative_active_gpu_hours": 0.75,
         },
         warnings,
     )
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
     assert heartbeat["cumulative_env_steps"] == 7
     assert heartbeat["cumulative_generated_tokens"] == 53
+    assert heartbeat["cumulative_active_gpu_hours"] == 0.75
     assert (tmp_path / "rollout_samples.jsonl").exists()
     assert (tmp_path / "trajectory_diagnostics.jsonl").exists()
 
