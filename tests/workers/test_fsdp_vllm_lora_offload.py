@@ -92,6 +92,7 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     assert events == ["wake_weights", "wake_kv_cache"]
 
     events.clear()
+    manager.layered_summon = False
     manager.stage_updated_weights()
     manager.__enter__()
     assert events == ["wake_weights", "update_lora", "wake_kv_cache"]

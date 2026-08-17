@@ -114,12 +114,12 @@ class FSDPVLLMShardingManager(BaseShardingManager):
             return
         from peft.utils.save_and_load import get_peft_model_state_dict
 
-        if fsdp_version(self.module) > 0 and self.layered_summon:
+        if fsdp_version(self.module) > 0:
+            # Post-update staging must never summon the full base model: on a
+            # single-rank NO_SHARD actor that can leave the entire 4B model
+            # resident and overlap vLLM's KV-cache wake-up.  The layered helper
+            # materializes only adapter tensors and returns detached CPU copies.
             params = layered_summon_lora_params(self.module)
-        elif fsdp_version(self.module) > 0:
-            with FSDP.summon_full_params(self.module, writeback=False):
-                params = get_peft_model_state_dict(wrapped_module)
-                params = {name: param.full_tensor().detach().cpu() if hasattr(param, "full_tensor") else param.detach().cpu() for name, param in params.items()}
         else:
             params = {name: param.detach().cpu() for name, param in get_peft_model_state_dict(wrapped_module).items()}
         if not params or any(getattr(param, "device", None) is None or param.device.type != "cpu" for param in params.values()):
