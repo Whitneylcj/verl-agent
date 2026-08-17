@@ -66,6 +66,10 @@ download_webshop_file \
   items_ins_v2_1000.json \
   1IduG0xl544V_A_jv3tHXC0kyFi7PnyBu \
   f88a36314a397b53b3d9c3fa5878e5f7b26d35019a51ec83fbedeca61a948f6f
+download_webshop_file \
+  items_human_ins.json \
+  14Kb5SPBk_jfdLZ_CDBNitW98QLDlKR5O \
+  cf78667548a71786e1d9049c24b802e48e1084ad4bb021cae56ce1f6d96954a3
 
 export WEBSHOP_DATA_ROOT=${data_root}
 export WEBSHOP_SEARCH_ROOT=${search_root}

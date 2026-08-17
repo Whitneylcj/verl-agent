@@ -61,8 +61,9 @@ bash examples/exact_trainer/prepare_webshop.sh
 The script prefers the official Google Drive IDs, validates fixed SHA-256
 digests, and falls back to a commit-pinned third-party Hugging Face mirror when
 Drive is unavailable. Set `WEBSHOP_DATA_SOURCE=drive` to forbid that fallback or
-`WEBSHOP_DATA_SOURCE=mirror` to select it explicitly. Both files are then
-validated as 1,000 unique, attribute-aligned products before indexing.
+`WEBSHOP_DATA_SOURCE=mirror` to select it explicitly. The files are then
+validated as 1,000 unique, attribute-aligned products with non-empty matching
+human instructions before indexing.
 
 Set `APPWORLD_PORT_FILE` to the persistent port manifest produced by the
 AppWorld service launcher. The client refuses to start when that manifest is

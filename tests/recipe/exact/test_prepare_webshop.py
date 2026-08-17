@@ -30,10 +30,12 @@ def test_write_documents_emits_jsonl(tmp_path):
 def test_validate_source_files_requires_aligned_unique_1k_products(tmp_path):
     products = [{"asin": f"A-{index}"} for index in range(1000)]
     attributes = {product["asin"]: {"attributes": []} for product in products}
+    human_instructions = {"A-0": [{"instruction": "find it"}]}
     (tmp_path / "items_shuffle_1000.json").write_text(json.dumps(products))
     (tmp_path / "items_ins_v2_1000.json").write_text(json.dumps(attributes))
+    (tmp_path / "items_human_ins.json").write_text(json.dumps(human_instructions))
 
-    assert validate_source_files(tmp_path) == (1000, 1000)
+    assert validate_source_files(tmp_path) == (1000, 1000, 1)
 
     products[-1]["asin"] = products[0]["asin"]
     (tmp_path / "items_shuffle_1000.json").write_text(json.dumps(products))
