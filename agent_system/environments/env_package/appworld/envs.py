@@ -215,6 +215,7 @@ class AppWorldEnvs:
         self.env_num = env_num
         self.group_n = group_n
         self.num_processes = env_num * group_n
+        self.rng = np.random.default_rng(seed)
         self.task_ids = load_task_ids(dataset_name)
 
         if self.env_num > len(self.task_ids):
@@ -278,7 +279,7 @@ class AppWorldEnvs:
         returning each environment's initial observation and info.
         """
         # randomly select self.env_num task_id from self.task_ids
-        task_id = np.random.choice(self.task_ids, self.env_num, replace=False)
+        task_id = self.rng.choice(self.task_ids, self.env_num, replace=False)
         # repeat task_id group_n times
         task_id = np.repeat(task_id, self.group_n).tolist()
 
@@ -334,9 +335,19 @@ def build_appworld_envs(
     group_n=1,
     start_server_id=0,
     resources_per_worker=None,
+    port_file="appworld_ports.ports",
 ):
 
     if resources_per_worker is None:
         resources_per_worker = {"num_cpus": 0.1}
 
-    return AppWorldEnvs(dataset_name=dataset_name, max_interactions=max_interactions, seed=seed, env_num=env_num, group_n=group_n, start_server_id=start_server_id, resources_per_worker=resources_per_worker)
+    return AppWorldEnvs(
+        dataset_name=dataset_name,
+        max_interactions=max_interactions,
+        seed=seed,
+        env_num=env_num,
+        group_n=group_n,
+        start_server_id=start_server_id,
+        resources_per_worker=resources_per_worker,
+        port_file=port_file,
+    )

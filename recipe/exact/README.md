@@ -145,6 +145,7 @@ ports owned by this recipe with:
 ```bash
 bash examples/exact_trainer/run_appworld_schema_audit.sh
 bash examples/exact_trainer/start_appworld_services.sh
+bash examples/exact_trainer/run_appworld_probe.sh
 # later, stop exactly those sessions
 bash examples/exact_trainer/stop_appworld_services.sh
 ```
