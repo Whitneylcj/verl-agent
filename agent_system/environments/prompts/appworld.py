@@ -18,7 +18,13 @@
 import json
 
 
-def appworld_json_auth_guidance(prior_actions) -> str:
+def appworld_json_auth_guidance(
+    prior_actions,
+    *,
+    prior_results=(),
+    task_apps=(),
+    supervisor_email=None,
+) -> str:
     """Return the next deterministic authentication bootstrap instruction."""
 
     parsed_actions = []
@@ -26,9 +32,17 @@ def appworld_json_auth_guidance(prior_actions) -> str:
         try:
             parsed = json.loads(action)
         except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(parsed, dict):
-            parsed_actions.append(parsed)
+            parsed = None
+        parsed_actions.append(parsed if isinstance(parsed, dict) else None)
+
+    parsed_results = []
+    for result in prior_results:
+        try:
+            parsed_results.append(json.loads(result))
+        except (TypeError, json.JSONDecodeError):
+            parsed_results.append(None)
+    if len(parsed_results) < len(parsed_actions):
+        parsed_results.extend([None] * (len(parsed_actions) - len(parsed_results)))
 
     required_calls = (
         (
@@ -55,10 +69,61 @@ def appworld_json_auth_guidance(prior_actions) -> str:
         if expected_action not in parsed_actions:
             return f"{instruction}\n{action_json}"
 
+    credentials = {}
+    for action, result in zip(parsed_actions, parsed_results, strict=False):
+        if action == required_calls[-1][0] and isinstance(result, list):
+            credentials.update({item["account_name"]: item["password"] for item in result if isinstance(item, dict) and "account_name" in item and "password" in item})
+
+    protected_apps = [str(app_name) for app_name in task_apps if app_name not in {"api_docs", "supervisor"}]
+    authenticated_tokens = {}
+    for app_name in protected_apps:
+        login_doc_action = {
+            "app": "api_docs",
+            "api": "show_api_doc",
+            "arguments": {"app_name": app_name, "api_name": "login"},
+        }
+        if login_doc_action not in parsed_actions:
+            action_json = json.dumps(login_doc_action, separators=(",", ":"))
+            return f"MANDATORY NEXT ACTION: inspect the exact login schema for the task app `{app_name}`. Copy this exact JSON object and do nothing else:\n{action_json}"
+
+        access_token = None
+        login_index = None
+        for index, (action, result) in enumerate(zip(parsed_actions, parsed_results, strict=False)):
+            if isinstance(action, dict) and action.get("app") == app_name and action.get("api") == "login" and isinstance(result, dict):
+                candidate = result.get("access_token")
+                if isinstance(candidate, str) and candidate:
+                    access_token = candidate
+                    login_index = index
+        if access_token is None:
+            password = credentials.get(app_name)
+            if not isinstance(password, str) or not password:
+                return f'MANDATORY NEXT ACTION: refresh the supervisor credentials before using `{app_name}`. Copy exactly:\n{{"app":"supervisor","api":"show_account_passwords","arguments":{{}}}}'
+            if not isinstance(supervisor_email, str) or not supervisor_email:
+                raise ValueError("AppWorld JSON authentication requires the supervisor email")
+            login_action = {
+                "app": app_name,
+                "api": "login",
+                "arguments": {"username": supervisor_email, "password": password},
+            }
+            action_json = json.dumps(login_action, separators=(",", ":"))
+            return f"MANDATORY NEXT ACTION: log in to `{app_name}` with the matching supervisor credential. Copy this exact JSON object and do nothing else:\n{action_json}"
+
+        authenticated_tokens[app_name] = access_token
+        api_list_action = {
+            "app": "api_docs",
+            "api": "show_api_descriptions",
+            "arguments": {"app_name": app_name},
+        }
+        if not any(action == api_list_action for action in parsed_actions[login_index + 1 :]):
+            action_json = json.dumps(api_list_action, separators=(",", ":"))
+            return f"MANDATORY NEXT ACTION: login succeeded; now list the documented `{app_name}` APIs. Copy this exact JSON object and do nothing else:\n{action_json}"
+
+    token_context = ", ".join(f"{app_name} access_token={token}" for app_name, token in authenticated_tokens.items())
     return (
-        "Authentication bootstrap is complete. Before calling a protected task app, inspect that app's exact `login` "
-        "API schema, log in with the matching supervisor credential, and copy the returned `access_token` into every "
-        "protected call. If a call returns 401, repair authentication instead of repeating it."
+        "Authentication bootstrap is complete. Inspect the exact API doc for the task operation before calling it. "
+        f"Persistent authentication context: {token_context or 'no protected task app was identified'}. "
+        "Copy the matching access_token into every protected call. If a call returns 401, repair authentication "
+        "instead of repeating it."
     )
 
 

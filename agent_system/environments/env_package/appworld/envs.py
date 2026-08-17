@@ -165,6 +165,7 @@ class AppWorldWorker:
         info = {
             "task_id": task_id,
             "supervisor": dict(self.env.task.supervisor),
+            "allowed_apps": list(self.env.task.allowed_apps),
         }
         return obs, info
 

@@ -47,6 +47,7 @@ def test_json_api_history_keeps_model_action_not_compiled_python():
         }
     ]
     manager.tasks = ["Inspect the available apps."]
+    manager.allowed_apps = [["spotify"]]
     manager.pre_text_obs = manager.tasks.copy()
     model_action = '{"app":"api_docs","api":"show_app_descriptions","arguments":{}}'
 
@@ -76,3 +77,46 @@ def test_json_api_auth_guidance_advances_only_after_required_calls():
     assert "show_api_doc" in appworld_json_auth_guidance([show_supervisor_apis])
     assert "show_account_passwords" in appworld_json_auth_guidance([show_supervisor_apis, show_password_doc])
     assert "access_token" in appworld_json_auth_guidance([show_supervisor_apis, show_password_doc, fetch_passwords])
+
+
+def test_json_api_auth_guidance_persists_task_app_access_token():
+    show_supervisor_apis = '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}'
+    show_password_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}'
+    fetch_passwords = '{"app":"supervisor","api":"show_account_passwords","arguments":{}}'
+    bootstrap_actions = [show_supervisor_apis, show_password_doc, fetch_passwords]
+    bootstrap_results = ["[]", "{}", '[{"account_name":"spotify","password":"secret"}]']
+
+    guidance = appworld_json_auth_guidance(
+        bootstrap_actions,
+        prior_results=bootstrap_results,
+        task_apps=["spotify"],
+        supervisor_email="user@example.com",
+    )
+    assert '"app_name":"spotify","api_name":"login"' in guidance
+
+    show_login_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"login"}}'
+    guidance = appworld_json_auth_guidance(
+        [*bootstrap_actions, show_login_doc],
+        prior_results=[*bootstrap_results, "{}"],
+        task_apps=["spotify"],
+        supervisor_email="user@example.com",
+    )
+    assert '"username":"user@example.com","password":"secret"' in guidance
+
+    login = '{"app":"spotify","api":"login","arguments":{"username":"user@example.com","password":"secret"}}'
+    guidance = appworld_json_auth_guidance(
+        [*bootstrap_actions, show_login_doc, login],
+        prior_results=[*bootstrap_results, "{}", '{"access_token":"token-123"}'],
+        task_apps=["spotify"],
+        supervisor_email="user@example.com",
+    )
+    assert '"api":"show_api_descriptions"' in guidance
+
+    show_spotify_apis = '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"spotify"}}'
+    guidance = appworld_json_auth_guidance(
+        [*bootstrap_actions, show_login_doc, login, show_spotify_apis],
+        prior_results=[*bootstrap_results, "{}", '{"access_token":"token-123"}', "[]"],
+        task_apps=["spotify"],
+        supervisor_email="user@example.com",
+    )
+    assert "spotify access_token=token-123" in guidance

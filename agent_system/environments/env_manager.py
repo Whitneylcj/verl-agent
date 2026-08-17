@@ -535,6 +535,7 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
         text_obs, infos = self.envs.reset()
         
         self.supervisors = [info['supervisor'] for info in infos]
+        self.allowed_apps = [info.get("allowed_apps", []) for info in infos]
         self.memory.reset(batch_size = len(text_obs))
         self.tasks = text_obs.copy()
         self.pre_text_obs = text_obs
@@ -658,7 +659,12 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                         current_step=len(self.memory[i]) + 1,
                         current_observation=text_obs[i],
                         auth_guidance=(
-                            appworld_json_auth_guidance(record["action"] for record in self.memory[i])
+                            appworld_json_auth_guidance(
+                                [record["action"] for record in self.memory[i]],
+                                prior_results=[record["text_obs"] for record in self.memory[i]],
+                                task_apps=self.allowed_apps[i],
+                                supervisor_email=self.supervisors[i]["email"],
+                            )
                             if action_mode == "json_api"
                             else ""
                         ),
