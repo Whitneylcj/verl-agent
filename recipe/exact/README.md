@@ -38,12 +38,15 @@ On the prepared GPU host, compose a launch without starting environments:
 PREFLIGHT_ONLY=1 bash examples/exact_trainer/run_sokoban.sh
 ```
 
-Then run one environment probe, the repository's standard GRPO smoke baseline,
-a loss-aggregation-matched GRPO control, and an EXACT smoke run before a pilot.
-Set `ADV_ESTIMATOR=grpo LOSS_AGG_MODE=token-mean` for the standard GRPO loss;
-omit `LOSS_AGG_MODE` for the matched sequence-score control used in comparisons.
-The matched control reuses the EXACT model, prompt, seed, rollout budget,
-optimizer, schedule, and hardware settings.
+Then run one environment probe, a repository-style GRPO pipeline smoke, a
+strictly matched GRPO control, and an EXACT smoke before a longer pilot. The
+repository-style stage uses token-mean loss and the repository's invalid-action
+reward penalty; it verifies the inherited algorithm/config family but does not
+reproduce a published result after single-GPU, LoRA, batch-size, or text-mode
+adaptations. The matched control disables that extra reward shaping, uses
+`seq-mean-token-sum`, and reuses the EXACT model, prompt, seed, rollout budget,
+optimizer, schedule, and hardware. Matched GRPO versus EXACT is the estimator
+comparison.
 
 `MODEL_PATH` may be a Hugging Face model ID or a resolved local snapshot. The
 launcher derives a distinct output tag from its basename; set `MODEL_TAG` when
@@ -66,16 +69,19 @@ used for the official GRPO baseline, the sequence-score-matched GRPO control,
 and EXACT. Only start these GPU runs after explicit authorization.
 
 On an SSH host, keep an authorized pilot alive across disconnects with the
-managed launcher (run it after sourcing the prepared environment):
+stage launcher (run it after sourcing the prepared environment):
 
 ```bash
-bash examples/exact_trainer/launch_managed.sh sokoban
+PILOT_AUTHORIZED=1 bash examples/exact_trainer/launch_pilot_stage.sh \
+  repository_grpo sokoban
 screen -ls
 python -m recipe.exact.inspect_run /path/printed/by/launcher --window 20
 ```
 
-The launcher refuses existing run/log paths, starts one named GNU Screen
-session, and places the console log under
+Run and inspect `repository_grpo`, `matched_grpo`, and `exact` sequentially;
+do not auto-launch the next stage after a failed or anomalous run. The launcher
+requires the explicit `PILOT_AUTHORIZED=1` guard, refuses existing run/log
+paths, starts one named GNU Screen session, and places the console log under
 `/root/autodl-tmp/logs/verl-agent/`. To request a graceful interrupt, pass the
 printed session name to `stop_managed.sh`; never kill every Python or Ray
 process on a shared host.
@@ -175,6 +181,8 @@ python -m recipe.exact.compare_runs \
   --window 20 --fail-on-uncontrolled-drift
 ```
 
-Differences in estimator, loss aggregation, experiment name, and output paths
-are declared controls. A changed model, seed, environment, learning rate,
-budget, prompt length, batch size, or optimizer setting fails the audit.
+Differences in estimator, loss aggregation, repository-style invalid-action
+penalty, experiment name, and output paths are declared controls. A changed
+model, seed, environment, learning rate, budget, prompt length, batch size, or
+optimizer setting fails the audit. Interpret the repository-style stage as a
+pipeline check; use matched GRPO versus EXACT for the causal estimator contrast.

@@ -12,6 +12,7 @@ from recipe.exact.inspect_run import build_run_report
 _CONTROLLED_OVERRIDE_KEYS = {
     "algorithm.adv_estimator",
     "actor_rollout_ref.actor.loss_agg_mode",
+    "actor_rollout_ref.actor.use_invalid_action_penalty",
     "trainer.experiment_name",
     "trainer.default_local_dir",
     "trainer.rollout_data_dir",

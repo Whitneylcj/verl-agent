@@ -26,6 +26,7 @@ save_freq=${SAVE_FREQ:-10}
 test_freq=${TEST_FREQ:-5}
 max_env_steps=${MAX_ENV_STEPS:-10000}
 max_generated_tokens=${MAX_GENERATED_TOKENS:-1000000}
+use_invalid_action_penalty=${USE_INVALID_ACTION_PENALTY:-False}
 max_steps=20
 max_prompt_length=2048
 
@@ -96,7 +97,7 @@ common_overrides=(
   "actor_rollout_ref.actor.use_kl_loss=True"
   "actor_rollout_ref.actor.kl_loss_coef=0.01"
   "actor_rollout_ref.actor.kl_loss_type=low_var_kl"
-  "actor_rollout_ref.actor.use_invalid_action_penalty=False"
+  "actor_rollout_ref.actor.use_invalid_action_penalty=${use_invalid_action_penalty}"
   "actor_rollout_ref.actor.fsdp_config.param_offload=False"
   "actor_rollout_ref.actor.fsdp_config.optimizer_offload=False"
   "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2"
