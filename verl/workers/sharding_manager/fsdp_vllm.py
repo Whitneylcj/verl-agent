@@ -78,9 +78,12 @@ def _collect_single_rank_lora_params(fsdp_module: FSDP, wrapped_module: PeftMode
             fqn = flat_param._fqns[param_index]
             shape = flat_param._shapes[param_index]
             param_index += 1
-            if "lora_" in fqn:
-                normalized_name = fqn.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
-                full_name = ".".join(part for part in (normalized_prefix, normalized_name) if part)
+            normalized_name = fqn.removeprefix("_fsdp_wrapped_module.").replace("._fsdp_wrapped_module", "")
+            full_name = ".".join(part for part in (normalized_prefix, normalized_name) if part)
+            # The LoRA auto-wrap policy wraps each trainable leaf module.  In
+            # that layout the flat parameter FQN is only ``weight`` and the
+            # ``lora_A``/``lora_B`` marker lives in the FSDP module prefix.
+            if "lora_" in full_name:
                 raw_state[full_name] = flat_param[offset : offset + numel].view(shape)
             offset += numel
         if param_index != len(flat_param._fqns) or offset != flat_param.numel():

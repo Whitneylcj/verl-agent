@@ -133,3 +133,40 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     }
     manager.__enter__()
     assert events == ["wake_weights", "update_lora", "wake_kv_cache"]
+
+
+def test_single_rank_lora_collection_finds_leaf_wrapped_weights(monkeypatch):
+    class _FakePeftModel:
+        peft_config = {"default": SimpleNamespace(bias="none", use_dora=False)}
+
+    class _FakeModule:
+        _fsdp_wrapped_module = _FakePeftModel()
+
+        def named_modules(self):
+            modules = [("", self)]
+            for adapter_name, value in (("lora_A", 1.0), ("lora_B", 2.0)):
+                flat_param = torch.tensor([value])
+                flat_param._fqns = ["weight"]
+                flat_param._shapes = [torch.Size([1])]
+                flat_param._numels_with_padding = [1]
+                flat_param._is_padding_mask = [False]
+                leaf = SimpleNamespace(_handle=SimpleNamespace(flat_param=flat_param))
+                modules.append(
+                    (
+                        f"_fsdp_wrapped_module.base_model.model.layers.0.q_proj.{adapter_name}.default",
+                        leaf,
+                    )
+                )
+            return modules
+
+    monkeypatch.setattr(fsdp_vllm, "PeftModel", _FakePeftModel)
+    monkeypatch.setattr(fsdp_vllm, "fsdp_version", lambda module: 1)
+    monkeypatch.setattr(peft_save, "get_peft_model_state_dict", lambda model, state_dict=None: state_dict)
+
+    params = fsdp_vllm._collect_single_rank_lora_params(_FakeModule(), _FakeModule._fsdp_wrapped_module)
+
+    assert set(params) == {
+        "base_model.model.layers.0.q_proj.lora_A.default.weight",
+        "base_model.model.layers.0.q_proj.lora_B.default.weight",
+    }
+    assert all(param.device.type == "cpu" for param in params.values())
