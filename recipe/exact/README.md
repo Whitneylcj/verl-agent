@@ -55,6 +55,18 @@ thinking chat-template mode used by the repository's Qwen3 agent recipes. This
 is only a compatibility setting: every new model family still requires a
 tokenizer, action-format, Transformers, and vLLM smoke test before training.
 
+After download authorization, prepare the pinned default model and exercise
+both inference backends with:
+
+```bash
+MODEL_DOWNLOAD_AUTHORIZED=1 bash examples/exact_trainer/prepare_model.sh
+```
+
+The script resumes the official Hugging Face cache, requires the pinned Qwen
+revision, validates every safetensors shard plus local config/tokenizer assets,
+writes a model manifest under `/root/autodl-tmp/config/models/`, and passes the
+resolved immutable snapshot path to both smoke tests. It does not train.
+
 Keep the first paid run to one conservatively reserved rollout batch. For a
 Sokoban batch with two prompts, two trajectories per prompt, and 15 steps:
 
