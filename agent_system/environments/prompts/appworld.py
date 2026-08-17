@@ -26,12 +26,13 @@ Email: {supervisor_email}
 Phone: {supervisor_phone_number}
 Task: {task_description}
 
-Return exactly:
-<think>brief reasoning about the next single API call</think>
-<action>{{"app":"api_docs","api":"show_app_descriptions","arguments":{{}}}}</action>
+This is the first turn. Do not solve the task or invent an API yet. Copy this
+exact JSON object as your entire response:
+{{"app":"api_docs","api":"show_app_descriptions","arguments":{{}}}}
 
-The action must be valid JSON with exactly `app`, `api`, and `arguments`.
-Never emit Python code. Use literal JSON arguments based on prior results.
+Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
+Never emit reasoning, tags, Markdown fences, Python, or placeholder names such
+as `app_name` and `api_name`.
 """
 
 
@@ -50,12 +51,16 @@ Recent interaction history ({history_length} of {step_count} prior calls):
 Current result:
 {current_observation}
 
-Return exactly one JSON API action:
-<think>brief reasoning</think>
-<action>{{"app":"app_name","api":"api_name","arguments":{{"name":"literal value"}}}}</action>
-
-The JSON object must contain exactly `app`, `api`, and `arguments`. Never emit
-Python code. Call supervisor.complete_task when the task is finished.
+Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
+Use only API names learned from results. Never guess an API or use the literal
+placeholders `app_name` and `api_name`. To inspect documentation, use:
+{{"app":"api_docs","api":"show_api_descriptions","arguments":{{"app_name":"spotify"}}}}
+then, with a real returned API name:
+{{"app":"api_docs","api":"show_api_doc","arguments":{{"app_name":"supervisor","api_name":"show_account_passwords"}}}}
+Replace the argument values with relevant names shown in the latest result.
+If the last result is an error, inspect documentation instead of guessing.
+Never emit reasoning, tags, Markdown fences, or Python. Call the documented
+supervisor.complete_task API only when the task is finished.
 """
 
 

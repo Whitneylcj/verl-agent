@@ -1,3 +1,5 @@
+import pytest
+
 from recipe.exact.appworld_schema import (
     POLICY_CONTEXT_RESOURCE,
     appworld_factor_id,
@@ -101,8 +103,15 @@ def test_effect_registry_uses_audited_service_closure_and_version_fallback():
     assert set(wrong_source["api_possible_write_sets"]["venmo.create_payment_request"]) == set(wrong_source["all_model_resources"])
 
 
-def test_resolve_effect_schema_splits_selector_from_prefix_known_arguments():
-    text = '<think>inspect</think><action>{"app":"venmo","api":"create_payment_request","arguments":{"user_email":"a@example.com","amount":3}}</action>'
+@pytest.mark.parametrize(
+    "text",
+    [
+        '<think>inspect</think><action>{"app":"venmo","api":"create_payment_request","arguments":{"user_email":"a@example.com","amount":3}}</action>',
+        '{"app":"venmo","api":"create_payment_request","arguments":{"user_email":"a@example.com","amount":3}}',
+        '```json\n{"app":"venmo","api":"create_payment_request","arguments":{"user_email":"a@example.com","amount":3}}\n```',
+    ],
+)
+def test_resolve_effect_schema_splits_selector_from_prefix_known_arguments(text):
     schema = resolve_appworld_effect_schema(_registry(), text, [ord(character) for character in text], CharacterTokenizer())
 
     assert schema["resolution_fallback"] is False

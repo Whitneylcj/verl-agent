@@ -37,17 +37,71 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def parse_json_api_action(action: str) -> ParsedAppWorldAction:
-    """Validate one tagged JSON action without executing or compiling it."""
+def _trimmed_segment(text: str, start: int, end: int) -> tuple[str, int]:
+    segment = text[start:end]
+    left = len(segment) - len(segment.lstrip())
+    return segment.strip(), start + left
 
-    match = re.fullmatch(
-        r"\s*<think>(.*?)</think>\s*<action>(.*?)</action>\s*",
+
+def _unwrap_json_fence(action: str) -> tuple[str, int]:
+    """Return one optional JSON-fenced payload and its source offset."""
+
+    fenced = re.fullmatch(
+        r"\s*```(?:json)?[ \t]*(?:\r?\n)?(.*?)(?:\r?\n)?```\s*",
         action,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if fenced is None:
+        return _trimmed_segment(action, 0, len(action))
+    return _trimmed_segment(action, fenced.start(1), fenced.end(1))
+
+
+def parse_json_api_action(action: str) -> ParsedAppWorldAction:
+    """Validate one fixed-shape JSON action without executing model text.
+
+    The policy-facing contract is a bare ``app/api/arguments`` object.  A
+    single JSON fence, a single ``<action>`` wrapper, and the original
+    ``<think>...<action>`` form remain accepted because small instruction
+    models commonly emit those harmless wrappers.  Extra prose, multiple
+    calls, and arbitrary code remain invalid.
+    """
+
+    if not isinstance(action, str):
+        raise TypeError("action must be a string")
+    content, content_start = _unwrap_json_fence(action)
+    canonical = re.fullmatch(
+        r"<think>(.*?)</think>\s*<action>(.*?)</action>",
+        content,
         flags=re.DOTALL,
     )
-    if match is None or not match.group(1).strip():
-        raise ValueError("action must contain exactly one non-empty think block and one action block")
-    payload = json.loads(match.group(2).strip(), object_pairs_hook=_unique_object)
+    action_only = re.fullmatch(r"<action>(.*?)</action>", content, flags=re.DOTALL)
+    payload_text = content
+    payload_start = content_start
+    nested_payload = False
+    if canonical is not None:
+        if not canonical.group(1).strip():
+            raise ValueError("think block must be non-empty")
+        payload_text, relative_start = _trimmed_segment(
+            content,
+            canonical.start(2),
+            canonical.end(2),
+        )
+        payload_start = content_start + relative_start
+    elif action_only is not None:
+        payload_text, relative_start = _trimmed_segment(
+            content,
+            action_only.start(1),
+            action_only.end(1),
+        )
+        payload_start = content_start + relative_start
+
+    payload = json.loads(payload_text, object_pairs_hook=_unique_object)
+    if isinstance(payload, dict) and tuple(payload) == ("think", "action"):
+        thought = payload["think"]
+        if not isinstance(thought, str) or not thought.strip():
+            raise ValueError("nested think field must be a non-empty string")
+        payload = payload["action"]
+        nested_payload = True
     expected_keys = ("app", "api", "arguments")
     if not isinstance(payload, dict) or tuple(payload) != expected_keys:
         raise ValueError("JSON action keys must be ordered exactly as app, api, arguments")
@@ -59,14 +113,16 @@ def parse_json_api_action(action: str) -> ParsedAppWorldAction:
         raise ValueError("app must be a public Python identifier")
     if not isinstance(api_name, str) or identifier.fullmatch(api_name) is None:
         raise ValueError("api must be a public Python identifier")
+    if app_name == "app_name" or api_name == "api_name":
+        raise ValueError("app and api must not use literal placeholder names")
     if not isinstance(arguments, dict) or not all(isinstance(key, str) for key in arguments):
         raise ValueError("arguments must be a JSON object with string keys")
-    # The canonical root key is the first possible occurrence because app/api
-    # values are restricted identifiers. Escaped root keys remain valid JSON,
-    # but do not expose a trustworthy character boundary and therefore resolve
-    # to the conservative whole-response selector span.
-    payload_start = match.start(2)
-    arguments_key_start = match.group(2).find('"arguments"')
+    # Escaped root keys remain valid JSON, but do not expose a trustworthy
+    # character boundary and therefore resolve conservatively to the whole
+    # response.  In the nested compatibility form, begin after the action key
+    # so a quoted word inside the thought cannot be mistaken for the boundary.
+    arguments_search_start = payload_text.find('"action"') if nested_payload else 0
+    arguments_key_start = payload_text.find('"arguments"', max(arguments_search_start, 0))
     arguments_char_start = payload_start + arguments_key_start if arguments_key_start >= 0 else None
     return ParsedAppWorldAction(
         app=app_name,
@@ -77,7 +133,7 @@ def parse_json_api_action(action: str) -> ParsedAppWorldAction:
 
 
 def compile_json_api_action(action: str) -> str:
-    """Compile one tagged JSON object into a fixed-shape AppWorld API call."""
+    """Compile one validated JSON object into a fixed-shape AppWorld API call."""
 
     parsed = parse_json_api_action(action)
     # repr() turns JSON booleans/null into valid Python literals while all code

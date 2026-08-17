@@ -25,6 +25,7 @@ def appworld_projection(actions: List[str], action_mode: str = "python"):
     """
     if action_mode not in {"python", "json_api"}:
         raise ValueError(f"unsupported AppWorld action mode: {action_mode}")
+    projected_actions = list(actions)
     valids = [0] * len(actions)
 
     for i in range(len(actions)):
@@ -32,35 +33,35 @@ def appworld_projection(actions: List[str], action_mode: str = "python"):
 
         if action_mode == "json_api":
             try:
-                actions[i] = compile_json_api_action(original_str)
+                projected_actions[i] = compile_json_api_action(original_str)
                 valids[i] = 1
             except (TypeError, ValueError):
-                actions[i] = "raise ValueError('invalid structured action')"
+                projected_actions[i] = "raise ValueError('invalid structured action')"
             continue
 
         # Legacy unrestricted Python mode.
         start_tag = "<code>"
         end_tag = "</code>"
-        start_idx = actions[i].find(start_tag)
-        end_idx = actions[i].find(end_tag)
+        start_idx = projected_actions[i].find(start_tag)
+        end_idx = projected_actions[i].find(end_tag)
         try:
             if start_idx == -1 or end_idx == -1:
                 # If we can't find a valid <code>...</code> block, mark as invalid
-                extracted_action = actions[i][-100:]
+                extracted_action = projected_actions[i][-100:]
                 valids[i] = 0
-                actions[i] = extracted_action
+                projected_actions[i] = extracted_action
                 continue
 
             # Extract just the content between the tags
-            extracted_action = actions[i][start_idx + len(start_tag):end_idx]
+            extracted_action = projected_actions[i][start_idx + len(start_tag):end_idx]
 
-            actions[i] = extracted_action
+            projected_actions[i] = extracted_action
             valids[i] = 1
 
         except Exception:
-            extracted_action = actions[i][-100:]
+            extracted_action = projected_actions[i][-100:]
             valids[i] = 0
-            actions[i] = extracted_action
+            projected_actions[i] = extracted_action
 
         # check <think>...</think>
         think_start_idx = original_str.find("<think>")
@@ -68,4 +69,4 @@ def appworld_projection(actions: List[str], action_mode: str = "python"):
         if think_start_idx == -1 or think_end_idx == -1:
             valids[i] = 0
 
-    return actions, valids
+    return projected_actions, valids

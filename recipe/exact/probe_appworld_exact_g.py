@@ -82,7 +82,7 @@ def run_probe(
         if registry["opaque_factor_count"]:
             raise AssertionError("selected task unexpectedly contains opaque factors")
 
-        text_action = '<think>Inspect the available apps without changing task state.</think><action>{"app":"api_docs","api":"show_app_descriptions","arguments":{}}</action>'
+        text_action = '{"app":"api_docs","api":"show_app_descriptions","arguments":{}}'
         token_ids = np.asarray([[ord(character) for character in text_action]], dtype=np.int64)
         concrete = manager.resolve_exact_effect_schemas(
             [registry],

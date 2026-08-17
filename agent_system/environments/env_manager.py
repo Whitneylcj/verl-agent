@@ -543,11 +543,17 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
         return {'text': full_text_obs, 'image': None, 'anchor': text_obs}, infos
     
     def step(self, text_actions: List[str]):
+        original_text_actions = list(text_actions)
         actions, valids = self.projection_f(text_actions)
 
         text_obs, rewards, dones, infos = self.envs.step(actions)
 
-        self.memory.store({'text_obs': text_obs, 'action': actions})
+        history_actions = (
+            original_text_actions
+            if self.config.env.appworld.action_mode == "json_api"
+            else actions
+        )
+        self.memory.store({'text_obs': text_obs, 'action': history_actions})
         self.pre_text_obs = text_obs
 
         full_text_obs = self.build_text_obs(text_obs)
@@ -633,7 +639,7 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                     step_number = start_index + j + 1
                     action = record["action"]
                     env_obs = record["text_obs"]
-                    action_history += f"\nCode {step_number}: \n{action}\n\nResult {step_number}: \n{env_obs}\n"
+                    action_history += f"\nAction {step_number}:\n{action}\n\nResult {step_number}:\n{env_obs}\n"
                 
                 if len(action_history) > 10000:
                     action_history = "... " + action_history[-10000:]
