@@ -55,6 +55,19 @@ def test_appworld_preflight_preserves_long_api_documentation() -> None:
     assert "max_prompt_length: 8192" in config
 
 
+@pytest.mark.parametrize("environment", ("sokoban", "alfworld"))
+def test_reasoning_environments_default_to_512_response_tokens(environment: str) -> None:
+    pytest.importorskip("hydra")
+    config = _preflight(environment)
+    assert "max_response_length: 512" in config
+
+
+def test_response_length_override_is_preserved() -> None:
+    pytest.importorskip("hydra")
+    config = _preflight("sokoban", MAX_RESPONSE_LENGTH="384")
+    assert "max_response_length: 384" in config
+
+
 def test_exact_mode_override_is_preserved() -> None:
     assert _run_dir("sokoban", EXACT_MODE="graph_cv").startswith("exact_graph_cv_")
 

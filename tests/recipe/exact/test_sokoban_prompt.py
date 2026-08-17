@@ -5,11 +5,13 @@ from agent_system.environments.prompts.sokoban import (
 )
 
 
-def test_sokoban_prompts_require_brief_spatial_reasoning_and_action_tag():
+def test_sokoban_prompts_require_bounded_spatial_plan_and_action_tag():
     for template in (SOKOBAN_TEMPLATE, SOKOBAN_TEMPLATE_NO_HIS, SOKOBAN_VISUAL_TEMPLATE):
         assert "Number rows top-to-bottom and columns left-to-right" in template
-        assert "Before the action, write 1-3 short sentences" in template
-        assert "intended useful box push" in template
+        assert "Reply in exactly two lines" in template
+        assert "first line must be at most 30 words" in template
+        assert "intended push=<direction>" in template
+        assert "Do not list alternatives or reconsider" in template
         assert "within <action> and </action> tags" in template
         assert "only required executable portion" in template
 

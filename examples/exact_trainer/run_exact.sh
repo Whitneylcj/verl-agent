@@ -30,17 +30,20 @@ use_invalid_action_penalty=${USE_INVALID_ACTION_PENALTY:-False}
 potential_scale=${POTENTIAL_SCALE:-1.0}
 max_steps=20
 max_prompt_length=2048
+max_response_length=${MAX_RESPONSE_LENGTH:-256}
 
 case "${environment_name}" in
   sokoban)
     env_name=Sokoban
     default_exact_mode=temporal
     max_steps=15
+    max_response_length=${MAX_RESPONSE_LENGTH:-512}
     ;;
   alfworld)
     env_name=alfworld/AlfredTWEnv
     default_exact_mode=temporal
     max_steps=30
+    max_response_length=${MAX_RESPONSE_LENGTH:-512}
     ;;
   webshop)
     env_name=Webshop
@@ -86,7 +89,7 @@ common_overrides=(
   "data.train_batch_size=${train_size}"
   "data.val_batch_size=${validation_size}"
   "data.max_prompt_length=${max_prompt_length}"
-  "data.max_response_length=256"
+  "data.max_response_length=${max_response_length}"
   "data.filter_overlong_prompts=True"
   "data.truncation=error"
   "data.return_raw_chat=True"
