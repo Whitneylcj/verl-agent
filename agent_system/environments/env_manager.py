@@ -15,7 +15,7 @@
 
 import os
 from functools import partial
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from omegaconf import OmegaConf
@@ -23,6 +23,71 @@ from omegaconf import OmegaConf
 from agent_system.environments.base import EnvironmentManagerBase, to_numpy
 from agent_system.environments.prompts import *
 from agent_system.memory import SearchMemory, SimpleMemory
+
+
+def _sokoban_legal_actions(text_observation: Any) -> Optional[Tuple[List[str], List[str]]]:
+    """Infer actions that change the board from the rendered text grid only."""
+
+    symbols = {"#", "_", "O", "X", "P", "S", "√"}
+    grid = []
+    for line in str(text_observation).splitlines():
+        cells = line.split()
+        if cells and all(cell in symbols for cell in cells):
+            grid.append(cells)
+    if not grid or any(len(row) != len(grid[0]) for row in grid):
+        return None
+
+    players = [
+        (row_index, column_index)
+        for row_index, row in enumerate(grid)
+        for column_index, cell in enumerate(row)
+        if cell in {"P", "S"}
+    ]
+    if len(players) != 1:
+        return None
+
+    player_row, player_column = players[0]
+    directions = (
+        ("up", -1, 0),
+        ("down", 1, 0),
+        ("left", 0, -1),
+        ("right", 0, 1),
+    )
+    legal_actions = []
+    legal_pushes = []
+    for name, row_delta, column_delta in directions:
+        next_row = player_row + row_delta
+        next_column = player_column + column_delta
+        if not (0 <= next_row < len(grid) and 0 <= next_column < len(grid[0])):
+            continue
+        next_cell = grid[next_row][next_column]
+        if next_cell in {"_", "O"}:
+            legal_actions.append(name)
+            continue
+        if next_cell not in {"X", "√"}:
+            continue
+        beyond_row = next_row + row_delta
+        beyond_column = next_column + column_delta
+        if not (0 <= beyond_row < len(grid) and 0 <= beyond_column < len(grid[0])):
+            continue
+        if grid[beyond_row][beyond_column] in {"_", "O"}:
+            legal_actions.append(name)
+            legal_pushes.append(name)
+    return legal_actions, legal_pushes
+
+
+def _sokoban_action_constraint(text_observation: Any) -> str:
+    inferred = _sokoban_legal_actions(text_observation)
+    if inferred is None:
+        return ""
+    legal_actions, legal_pushes = inferred
+    legal_text = ", ".join(legal_actions) if legal_actions else "none"
+    push_text = ", ".join(legal_pushes) if legal_pushes else "none"
+    return (
+        "# Current Legal Actions\n"
+        f"Choose only an action that changes the board: [{legal_text}]. "
+        f"Legal box pushes available now: [{push_text}]."
+    )
 
 
 def parse_gamefile(infos):
@@ -332,10 +397,14 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
                     action_key="action")
             
         for i in range(len(infos)):
+            action_constraint = _sokoban_action_constraint(text_obs[i]) if text_obs is not None else ""
+            constrained_observation = (
+                f"{text_obs[i]}\n{action_constraint}" if action_constraint else text_obs[i]
+            ) if text_obs is not None else None
             if init or self.config.env.history_length <= 0:
                 obs = SOKOBAN_VISUAL_TEMPLATE if self.is_multi_modal \
                  else SOKOBAN_TEMPLATE_NO_HIS.format(
-                    current_observation=text_obs[i],
+                    current_observation=constrained_observation,
                 )
             else:
                 if self.is_multi_modal:
@@ -347,7 +416,7 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
                         history_length=valid_lens[i],
                         action_history=memory_contexts[i],
                         current_step=len(self.memory[i]) + 1,
-                        current_observation=text_obs[i],
+                        current_observation=constrained_observation,
                         loop_warning=loop_warning,
                     )
             postprocess_text_obs.append(obs)
