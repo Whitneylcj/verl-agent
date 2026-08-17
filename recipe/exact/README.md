@@ -45,6 +45,26 @@ omit `LOSS_AGG_MODE` for the matched sequence-score control used in comparisons.
 The matched control reuses the EXACT model, prompt, seed, rollout budget,
 optimizer, schedule, and hardware settings.
 
+`MODEL_PATH` may be a Hugging Face model ID or a resolved local snapshot. The
+launcher derives a distinct output tag from its basename; set `MODEL_TAG` when
+two checkpoints share a basename. Qwen3 model IDs automatically disable the
+thinking chat-template mode used by the repository's Qwen3 agent recipes. This
+is only a compatibility setting: every new model family still requires a
+tokenizer, action-format, Transformers, and vLLM smoke test before training.
+
+Keep the first paid run to one conservatively reserved rollout batch. For a
+Sokoban batch with two prompts, two trajectories per prompt, and 15 steps:
+
+```bash
+TRAIN_SIZE=2 VALIDATION_SIZE=2 GROUP_SIZE=2 \
+MAX_ENV_STEPS=60 MAX_GENERATED_TOKENS=15360 TOTAL_EPOCHS=1 \
+bash examples/exact_trainer/run_sokoban.sh
+```
+
+The same `MODEL_PATH`, seed, sizes, budgets, optimizer, and schedule must be
+used for the official GRPO baseline, the sequence-score-matched GRPO control,
+and EXACT. Only start these GPU runs after explicit authorization.
+
 ## Remote environment assets
 
 Keep environment data outside the Git checkout. `run_exact.sh` defaults to

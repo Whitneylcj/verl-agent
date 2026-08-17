@@ -6,6 +6,8 @@ shift
 
 engine=${ENGINE:-vllm}
 model_path=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
+model_tag=${MODEL_TAG:-${model_path##*/}}
+model_tag=${model_tag//[^[:alnum:]._-]/_}
 algorithm_name=${ADV_ESTIMATOR:-exact}
 exact_mode=${EXACT_MODE:-graph}
 seed=${SEED:-0}
@@ -15,6 +17,11 @@ shared_data_root=${VERL_AGENT_SHARED_DATA_ROOT:-/root/autodl-tmp/data}
 train_size=${TRAIN_SIZE:-4}
 validation_size=${VALIDATION_SIZE:-16}
 group_size=${GROUP_SIZE:-4}
+total_epochs=${TOTAL_EPOCHS:-999}
+save_freq=${SAVE_FREQ:-10}
+test_freq=${TEST_FREQ:-5}
+max_env_steps=${MAX_ENV_STEPS:-10000}
+max_generated_tokens=${MAX_GENERATED_TOKENS:-1000000}
 max_steps=20
 max_prompt_length=2048
 
@@ -53,7 +60,7 @@ if [[ "${algorithm_name}" == "exact" && "${loss_agg_mode}" != "seq-mean-token-su
 fi
 
 loss_tag=${loss_agg_mode//-/_}
-experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${environment_name}_qwen2.5_1.5b_seed${seed}"
+experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${environment_name}_${model_tag}_seed${seed}"
 run_output_dir="${output_root}/${experiment_name}"
 train_file="${data_root}/text/train.parquet"
 validation_file="${data_root}/text/test.parquet"
@@ -111,12 +118,12 @@ common_overrides=(
   "trainer.experiment_name=${experiment_name}"
   "trainer.n_gpus_per_node=1"
   "trainer.nnodes=1"
-  "trainer.save_freq=10"
-  "trainer.test_freq=5"
-  "trainer.total_epochs=999"
+  "trainer.save_freq=${save_freq}"
+  "trainer.test_freq=${test_freq}"
+  "trainer.total_epochs=${total_epochs}"
   "trainer.val_before_train=True"
-  "trainer.max_env_steps=10000"
-  "trainer.max_generated_tokens=1000000"
+  "trainer.max_env_steps=${max_env_steps}"
+  "trainer.max_generated_tokens=${max_generated_tokens}"
   "trainer.default_local_dir=${run_output_dir}/checkpoints"
   "trainer.rollout_data_dir=${run_output_dir}/rollouts"
   "trainer.validation_data_dir=${run_output_dir}/validation"
@@ -130,8 +137,13 @@ export APPWORLD_PORT_FILE=${APPWORLD_PORT_FILE:-/root/autodl-tmp/config/appworld
 export WEBSHOP_DATA_ROOT=${WEBSHOP_DATA_ROOT:-${shared_data_root}/webshop/data}
 export WEBSHOP_SEARCH_ROOT=${WEBSHOP_SEARCH_ROOT:-${shared_data_root}/webshop/search_engine}
 
+model_overrides=()
+if [[ "${model_path,,}" == *qwen3* ]]; then
+  model_overrides+=("+data.apply_chat_template_kwargs.enable_thinking=False")
+fi
+
 if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  python3 -m verl.trainer.main_ppo "${common_overrides[@]}" --cfg job "$@"
+  python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "${model_overrides[@]}" --cfg job "$@"
   exit 0
 fi
 
@@ -143,4 +155,4 @@ if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then
     --val_data_size "${validation_size}"
 fi
 
-python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "$@"
+python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "${model_overrides[@]}" "$@"
