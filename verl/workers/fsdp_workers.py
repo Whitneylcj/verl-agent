@@ -617,6 +617,13 @@ class ActorRolloutRefWorker(Worker):
         if self._is_offload_optimizer:
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
+        if self._is_offload_param or self._is_offload_optimizer:
+            # Both offload helpers enqueue non-blocking device-to-host copies.
+            # Finish those transfers before a validation rollout asks vLLM's
+            # CuMem allocator to remap its weights and KV cache.
+            get_torch_device().synchronize()
+            get_torch_device().empty_cache()
+            log_gpu_memory_usage("After synchronizing actor offload during update_actor", logger=logger)
 
         return output
 

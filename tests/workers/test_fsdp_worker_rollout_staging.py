@@ -23,5 +23,7 @@ def test_update_stages_rollout_weights_before_actor_offload() -> None:
     calls = [node for node in ast.walk(update_actor) if isinstance(node, ast.Call)]
     stage = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "stage_updated_weights")
     offload = next(node for node in calls if isinstance(node.func, ast.Name) and node.func.id == "offload_fsdp_model_to_cpu")
+    synchronize = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "synchronize")
+    final_empty_cache = max(node.lineno for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "empty_cache")
 
-    assert stage.lineno < offload.lineno
+    assert stage.lineno < offload.lineno < synchronize.lineno < final_empty_cache
