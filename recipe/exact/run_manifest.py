@@ -105,6 +105,7 @@ def build_manifest(
                 "APPWORLD_ROOT",
                 "WEBSHOP_DATA_ROOT",
                 "WEBSHOP_SEARCH_ROOT",
+                "EXACT_CONSOLE_LOG",
             )
             if os.environ.get(key)
         },

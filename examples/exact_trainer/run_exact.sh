@@ -144,8 +144,15 @@ export WEBSHOP_DATA_ROOT=${WEBSHOP_DATA_ROOT:-${shared_data_root}/webshop/data}
 export WEBSHOP_SEARCH_ROOT=${WEBSHOP_SEARCH_ROOT:-${shared_data_root}/webshop/search_engine}
 
 model_overrides=()
-if [[ "${model_path,,}" == *qwen3* ]]; then
-  model_overrides+=("+data.apply_chat_template_kwargs.enable_thinking=False")
+case "${model_path}" in
+  *[Qq][Ww][Ee][Nn]3*)
+    model_overrides+=("+data.apply_chat_template_kwargs.enable_thinking=False")
+    ;;
+esac
+
+if [[ "${RUN_DIR_ONLY:-0}" == "1" ]]; then
+  printf '%s\n' "${run_output_dir}"
+  exit 0
 fi
 
 if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then

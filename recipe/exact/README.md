@@ -65,6 +65,21 @@ The same `MODEL_PATH`, seed, sizes, budgets, optimizer, and schedule must be
 used for the official GRPO baseline, the sequence-score-matched GRPO control,
 and EXACT. Only start these GPU runs after explicit authorization.
 
+On an SSH host, keep an authorized pilot alive across disconnects with the
+managed launcher (run it after sourcing the prepared environment):
+
+```bash
+bash examples/exact_trainer/launch_managed.sh sokoban
+screen -ls
+python -m recipe.exact.inspect_run /path/printed/by/launcher --window 20
+```
+
+The launcher refuses existing run/log paths, starts one named GNU Screen
+session, and places the console log under
+`/root/autodl-tmp/logs/verl-agent/`. To request a graceful interrupt, pass the
+printed session name to `stop_managed.sh`; never kill every Python or Ray
+process on a shared host.
+
 ## Remote environment assets
 
 Keep environment data outside the Git checkout. `run_exact.sh` defaults to

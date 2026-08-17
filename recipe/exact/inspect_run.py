@@ -83,6 +83,8 @@ def build_run_report(
     if window <= 0:
         raise ValueError("window must be positive")
     monitor_dir = _resolve_monitor_dir(run_dir)
+    run_root = monitor_dir.parent if monitor_dir.name == "monitor" else monitor_dir
+    manifest = _read_json(run_root / "run_manifest.json")
     heartbeat = _read_json(monitor_dir / "heartbeat.json")
     metric_records = _tail_jsonl(monitor_dir / "metrics.jsonl", window)
     validation_records = _tail_jsonl(monitor_dir / "validation_metrics.jsonl", window)
@@ -130,8 +132,20 @@ def build_run_report(
         )
 
     latest_metrics = metric_records[-1].get("metrics", {}) if metric_records else {}
+    if heartbeat is not None:
+        run_state = heartbeat.get("status", "unknown")
+    elif manifest is not None and (run_root / "resolved_config.yaml").is_file():
+        run_state = "ray_configured_no_heartbeat"
+    elif manifest is not None:
+        run_state = "launched_no_heartbeat"
+    else:
+        run_state = "unknown"
     return {
+        "run_root": str(run_root),
         "monitor_dir": str(monitor_dir),
+        "run_state": run_state,
+        "manifest": manifest,
+        "resolved_config_present": (run_root / "resolved_config.yaml").is_file(),
         "heartbeat": heartbeat,
         "latest_step": latest_metrics.get("training/global_step"),
         "latest_validation": validation_records[-1] if validation_records else None,

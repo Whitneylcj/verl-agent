@@ -57,5 +57,17 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
 def test_inspect_run_handles_initialized_but_empty_monitor(tmp_path):
     (tmp_path / "heartbeat.json").write_text(json.dumps({"status": "initializing", "step": 0, "warnings": []}))
     report = build_run_report(tmp_path)
+    assert report["run_state"] == "initializing"
     assert report["latest_step"] is None
     assert report["trends"] == {}
+
+
+def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
+    monitor = tmp_path / "monitor"
+    monitor.mkdir()
+    (tmp_path / "run_manifest.json").write_text(json.dumps({"experiment": {"name": "pilot"}}))
+
+    report = build_run_report(tmp_path)
+    assert report["run_state"] == "launched_no_heartbeat"
+    assert report["manifest"]["experiment"]["name"] == "pilot"
+    assert report["resolved_config_present"] is False
