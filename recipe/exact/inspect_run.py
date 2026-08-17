@@ -204,6 +204,32 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "verify the policy queries API documentation after an execution error",
             ),
         )
+    successful_application_rate = validation_metrics.get("val/agent_diag/appworld_successful_application_api_step_rate")
+    application_rate = validation_metrics.get("val/agent_diag/appworld_application_api_step_rate")
+    if isinstance(successful_application_rate, (int, float)) and float(successful_application_rate) == 0.0 and isinstance(application_rate, (int, float)) and float(application_rate) > 0.0:
+        add(
+            "appworld_no_successful_application_calls",
+            "high",
+            {
+                "val/agent_diag/appworld_application_api_step_rate": float(application_rate),
+                "val/agent_diag/appworld_successful_application_api_step_rate": float(successful_application_rate),
+            },
+            (
+                "inspect application API errors for authentication and argument failures",
+                "do not start policy updates until the base model executes at least one application call",
+            ),
+        )
+    early_completion_rate = validation_metrics.get("val/agent_diag/appworld_completion_before_application_success_trajectory_rate")
+    if isinstance(early_completion_rate, (int, float)) and float(early_completion_rate) > 0.0:
+        add(
+            "appworld_completion_before_application_success",
+            "high",
+            {"val/agent_diag/appworld_completion_before_application_success_trajectory_rate": float(early_completion_rate)},
+            (
+                "inspect completion calls that occur before any successful application API",
+                "verify the model performs state changes instead of describing them in the answer",
+            ),
+        )
     repeated_rate = latest("agent_diag/repeated_action_rate")
     if repeated_rate is not None and repeated_rate >= 0.2:
         add(

@@ -2,6 +2,7 @@ import gzip
 import json
 
 import numpy as np
+import pytest
 import torch
 
 from recipe.exact.monitor import (
@@ -10,6 +11,7 @@ from recipe.exact.monitor import (
     build_rollout_records,
     build_trajectory_diagnostics,
     redact_rollout_text,
+    summarize_appworld_validation_actions,
     summarize_trajectory_diagnostics,
     summarize_validation_action_validity,
 )
@@ -214,6 +216,32 @@ def test_validation_action_validity_keeps_syntax_and_execution_separate():
         "val/agent_diag/syntax_invalid_step_rate": 1 / 3,
         "val/agent_diag/execution_error_step_rate": 2 / 3,
     }
+
+
+def test_appworld_validation_actions_distinguish_docs_progress_and_early_completion():
+    metrics = summarize_appworld_validation_actions(
+        [
+            '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"spotify"}}',
+            '{"app":"spotify","api":"show_playlist_library","arguments":{}}',
+            '{"app":"supervisor","api":"complete_task","arguments":{"answer":"10"}}',
+            '{"app":"supervisor","api":"complete_task","arguments":{"answer":"done"}}',
+            "invalid action",
+        ],
+        ["task-a", "task-a", "task-a", "task-b", "task-b"],
+        [True, True, True, True, False],
+    )
+
+    assert metrics == {
+        "val/agent_diag/appworld_documentation_step_rate": 0.2,
+        "val/agent_diag/appworld_application_api_step_rate": 0.2,
+        "val/agent_diag/appworld_successful_application_api_step_rate": 0.2,
+        "val/agent_diag/appworld_completion_before_application_success_trajectory_rate": 0.5,
+    }
+
+
+def test_appworld_validation_actions_require_aligned_rows():
+    with pytest.raises(ValueError, match="must align"):
+        summarize_appworld_validation_actions(["{}"], [], [True])
 
 
 def test_baseline_diagnostics_do_not_invent_exact_factor_signals():

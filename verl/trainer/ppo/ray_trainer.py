@@ -892,9 +892,21 @@ class RayPPOTrainer:
         for k, v in success_rate.items():
             metric_dict[f'val/{k}'] = v
 
-        from recipe.exact.monitor import summarize_validation_action_validity
+        from recipe.exact.monitor import (
+            summarize_appworld_validation_actions,
+            summarize_validation_action_validity,
+        )
 
         metric_dict.update(summarize_validation_action_validity(validation_action_validity))
+        if "appworld" in self.config.env.env_name.lower() and validation_action_validity["is_action_execution_valid"]:
+            execution_valid = np.concatenate(validation_action_validity["is_action_execution_valid"], axis=0)
+            metric_dict.update(
+                summarize_appworld_validation_actions(
+                    sample_outputs,
+                    traj_uids,
+                    execution_valid,
+                )
+            )
 
         return metric_dict
 

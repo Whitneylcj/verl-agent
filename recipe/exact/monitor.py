@@ -330,6 +330,61 @@ def summarize_validation_action_validity(
     return result
 
 
+def summarize_appworld_validation_actions(
+    action_texts: Sequence[str],
+    trajectory_ids: Sequence[Any],
+    execution_valid: Sequence[bool],
+) -> dict[str, float]:
+    """Measure whether valid-looking AppWorld calls make task-level progress."""
+
+    if not (len(action_texts) == len(trajectory_ids) == len(execution_valid)):
+        raise ValueError("AppWorld validation actions, trajectories, and execution flags must align")
+    if not action_texts:
+        return {}
+
+    from recipe.exact.appworld_adapter import parse_json_api_action
+
+    parsed_actions = []
+    for text in action_texts:
+        try:
+            parsed_actions.append(parse_json_api_action(text))
+        except (TypeError, ValueError):
+            parsed_actions.append(None)
+
+    document_steps = 0
+    application_api_steps = 0
+    successful_application_api_steps = 0
+    seen_successful_application_api: dict[str, bool] = {}
+    completion_before_application_success_trajectories = set()
+    unique_trajectories = {str(value) for value in trajectory_ids}
+    for action, raw_trajectory_id, succeeded in zip(parsed_actions, trajectory_ids, execution_valid):
+        trajectory_id = str(raw_trajectory_id)
+        seen_successful_application_api.setdefault(trajectory_id, False)
+        if action is None:
+            continue
+        if action.app == "api_docs":
+            document_steps += 1
+            continue
+        if action.app == "supervisor" and action.api == "complete_task":
+            if not seen_successful_application_api[trajectory_id]:
+                completion_before_application_success_trajectories.add(trajectory_id)
+            continue
+        if action.app != "supervisor":
+            application_api_steps += 1
+            if bool(succeeded):
+                successful_application_api_steps += 1
+                seen_successful_application_api[trajectory_id] = True
+
+    total_steps = len(action_texts)
+    trajectory_count = len(unique_trajectories)
+    return {
+        "val/agent_diag/appworld_documentation_step_rate": float(document_steps / total_steps),
+        "val/agent_diag/appworld_application_api_step_rate": float(application_api_steps / total_steps),
+        "val/agent_diag/appworld_successful_application_api_step_rate": float(successful_application_api_steps / total_steps),
+        "val/agent_diag/appworld_completion_before_application_success_trajectory_rate": float(len(completion_before_application_success_trajectories) / max(trajectory_count, 1)),
+    }
+
+
 class AgentRunObserver:
     """Write common agentic metrics plus optional EXACT credit artifacts."""
 

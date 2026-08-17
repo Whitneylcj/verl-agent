@@ -83,6 +83,9 @@ def test_inspect_run_diagnoses_validation_only_action_failures(tmp_path):
                 "val/agent_diag/invalid_step_rate": 0.75,
                 "val/agent_diag/syntax_invalid_step_rate": 0.1,
                 "val/agent_diag/execution_error_step_rate": 0.7,
+                "val/agent_diag/appworld_application_api_step_rate": 0.25,
+                "val/agent_diag/appworld_successful_application_api_step_rate": 0.0,
+                "val/agent_diag/appworld_completion_before_application_success_trajectory_rate": 0.5,
             },
         },
     )
@@ -91,6 +94,11 @@ def test_inspect_run_diagnoses_validation_only_action_failures(tmp_path):
     diagnoses = {item["code"]: item for item in report["diagnoses"]}
     assert diagnoses["high_invalid_action_rate"]["evidence"] == {"val/agent_diag/invalid_step_rate": 0.75}
     assert diagnoses["appworld_api_execution_errors"]["evidence"] == {"val/agent_diag/execution_error_step_rate": 0.7}
+    assert diagnoses["appworld_no_successful_application_calls"]["evidence"] == {
+        "val/agent_diag/appworld_application_api_step_rate": 0.25,
+        "val/agent_diag/appworld_successful_application_api_step_rate": 0.0,
+    }
+    assert diagnoses["appworld_completion_before_application_success"]["evidence"] == {"val/agent_diag/appworld_completion_before_application_success_trajectory_rate": 0.5}
     assert "high_action_syntax_error_rate" not in diagnoses
 
 
