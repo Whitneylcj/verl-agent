@@ -18,14 +18,25 @@ def test_sokoban_projection_accepts_one_exact_action_without_think_tags():
     assert valid == [1]
 
 
+def test_sokoban_projection_accepts_consistent_explicit_fallback_markers():
+    actions = ["Reason briefly.\nAction: down\n\n<down></down>"]
+
+    projected, valid = sokoban_projection(actions)
+
+    assert projected == [2]
+    assert valid == [1]
+
+
 def test_sokoban_projection_rejects_missing_ambiguous_or_fuzzy_actions():
     actions = [
         "right",
         "<action>upright</action>",
         "<action>left</action><action>right</action>",
+        "Action: right\n<down></down>",
+        "<action>upright</action>\nAction: right",
     ]
 
     projected, valid = sokoban_projection(actions)
 
-    assert projected == [0, 0, 0]
-    assert valid == [0, 0, 0]
+    assert projected == [0, 0, 0, 0, 0]
+    assert valid == [0, 0, 0, 0, 0]

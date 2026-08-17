@@ -21,8 +21,10 @@ def sokoban_projection(actions: List[str]):
     """
     A function to process the actions.
     actions: the list of actions to be processed, it is a list of strings.
-    Reasoning text and wrappers may surround the action, but execution requires
-    exactly one <action>up/down/left/right</action> tag.
+    Reasoning text and wrappers may surround the action. Prefer exactly one
+    <action>up/down/left/right</action> tag. If that tag is absent, accept only
+    consistent explicit ``Action: direction`` or ``<direction></direction>``
+    markers; free prose and conflicting markers remain invalid.
     Sokoban action mappings:
     - 0: Still (projection fallback for an invalid action)
     - 1: Up
@@ -43,11 +45,20 @@ def sokoban_projection(actions: List[str]):
 
     for i in range(len(actions)):
         actions[i] = actions[i].lower()
-        matches = re.findall(r"<action>\s*(up|down|left|right)\s*</action>", actions[i])
-        if len(matches) != 1:
+        canonical = re.findall(r"<action>\s*(up|down|left|right)\s*</action>", actions[i])
+        if len(canonical) > 1:
             actions[i] = 0
             continue
-        actions[i] = action_pools[matches[0]]
+        explicit_lines = re.findall(r"(?m)^\s*action\s*:\s*(up|down|left|right)\s*$", actions[i])
+        direction_tags = re.findall(r"<(up|down|left|right)>\s*</\1>", actions[i])
+        if not canonical and ("<action" in actions[i] or "</action" in actions[i]):
+            actions[i] = 0
+            continue
+        candidates = [*canonical, *explicit_lines, *direction_tags]
+        if not candidates or len(set(candidates)) != 1:
+            actions[i] = 0
+            continue
+        actions[i] = action_pools[candidates[0]]
         valids[i] = 1
 
     return actions, valids
