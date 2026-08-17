@@ -150,3 +150,16 @@ Poll a live or completed run without loading the model:
 python -m recipe.exact.inspect_run /path/to/experiment --window 20
 python -m recipe.exact.inspect_run /path/to/experiment --show-rollouts 3
 ```
+
+After the three controlled pilots exist, audit unintended configuration drift
+and compare aligned metrics before interpreting any apparent gain:
+
+```bash
+python -m recipe.exact.compare_runs \
+  /path/to/standard_grpo /path/to/matched_grpo /path/to/exact \
+  --window 20 --fail-on-uncontrolled-drift
+```
+
+Differences in estimator, loss aggregation, experiment name, and output paths
+are declared controls. A changed model, seed, environment, learning rate,
+budget, prompt length, batch size, or optimizer setting fails the audit.
