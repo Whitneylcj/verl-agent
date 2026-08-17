@@ -13,7 +13,7 @@ model_path=${MODEL_PATH:-Qwen/Qwen2.5-1.5B-Instruct}
 model_tag=${MODEL_TAG:-${model_path##*/}}
 model_tag=${model_tag//[^[:alnum:]._-]/_}
 algorithm_name=${ADV_ESTIMATOR:-exact}
-exact_mode=${EXACT_MODE:-graph}
+exact_mode=${EXACT_MODE:-}
 seed=${SEED:-0}
 data_root=${VERL_AGENT_DATA_ROOT:-/root/autodl-tmp/data/verl-agent}
 output_root=${VERL_AGENT_OUTPUT_ROOT:-/root/autodl-tmp/outputs/verl-agent}
@@ -34,19 +34,23 @@ max_prompt_length=2048
 case "${environment_name}" in
   sokoban)
     env_name=Sokoban
+    default_exact_mode=temporal
     max_steps=15
     ;;
   alfworld)
     env_name=alfworld/AlfredTWEnv
+    default_exact_mode=temporal
     max_steps=30
     ;;
   webshop)
     env_name=Webshop
+    default_exact_mode=temporal
     max_steps=15
     max_prompt_length=4096
     ;;
   appworld)
     env_name=AppWorld
+    default_exact_mode=graph
     max_steps=20
     max_prompt_length=4096
     train_size=${TRAIN_SIZE:-2}
@@ -58,6 +62,7 @@ case "${environment_name}" in
     exit 2
     ;;
 esac
+exact_mode=${exact_mode:-${default_exact_mode}}
 
 loss_agg_mode=${LOSS_AGG_MODE:-seq-mean-token-sum}
 if [[ "${algorithm_name}" == "exact" && "${loss_agg_mode}" != "seq-mean-token-sum" ]]; then

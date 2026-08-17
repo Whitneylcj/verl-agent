@@ -55,6 +55,11 @@ On the prepared GPU host, compose a launch without starting environments:
 PREFLIGHT_ONLY=1 bash examples/exact_trainer/run_sokoban.sh
 ```
 
+The launcher defaults Sokoban, ALFWorld, and WebShop to `EXACT_MODE=temporal`
+(Exact-T), and AppWorld to `EXACT_MODE=graph` (Exact-G). Set `EXACT_MODE`
+explicitly only for a declared ablation; the resolved mode is recorded in the
+experiment name, Hydra config, and run manifest.
+
 Then run one environment probe, a repository-style GRPO pipeline smoke, a
 strictly matched GRPO control, and an EXACT smoke before a longer pilot. The
 repository-style stage uses token-mean loss and the repository's invalid-action
