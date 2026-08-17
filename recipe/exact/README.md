@@ -50,8 +50,9 @@ optimizer, schedule, and hardware settings.
 Keep environment data outside the Git checkout. `run_exact.sh` defaults to
 `/root/autodl-tmp/data/{alfworld,appworld,webshop}` and accepts
 `VERL_AGENT_SHARED_DATA_ROOT` to move the whole tree. After installing the
-documented WebShop text dependencies and `en_core_web_sm`, download and index
-the 1k-product development set with:
+documented WebShop text dependencies (`faiss-cpu` is needed even for Pyserini's
+Lucene search import) and `en_core_web_sm`, download and index the 1k-product
+development set with:
 
 ```bash
 bash examples/exact_trainer/prepare_webshop.sh

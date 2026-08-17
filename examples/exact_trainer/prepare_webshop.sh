@@ -8,7 +8,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 
 command -v gdown >/dev/null
 command -v java >/dev/null
-python -c 'import flask, pyserini, spacy, thefuzz'
+python -c 'import faiss, flask, pyserini, spacy, thefuzz'
 python -c 'import spacy; spacy.load("en_core_web_sm")'
 
 mkdir -p "${data_root}" "${search_root}"
