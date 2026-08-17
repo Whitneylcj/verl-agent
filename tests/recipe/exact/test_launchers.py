@@ -25,6 +25,20 @@ def _run_dir(environment: str, **extra_env: str) -> str:
     return Path(result.stdout.strip()).name
 
 
+def _preflight(environment: str, **extra_env: str) -> str:
+    env = os.environ.copy()
+    env.update({"PREFLIGHT_ONLY": "1", "MODEL_PATH": "fixture/model", **extra_env})
+    result = subprocess.run(
+        ["bash", str(RUN_EXACT), environment],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout
+
+
 @pytest.mark.parametrize("environment", ("sokoban", "alfworld", "webshop"))
 def test_stage_two_environments_default_to_exact_t(environment: str) -> None:
     assert _run_dir(environment).startswith("exact_temporal_")
@@ -36,3 +50,10 @@ def test_appworld_defaults_to_exact_g() -> None:
 
 def test_exact_mode_override_is_preserved() -> None:
     assert _run_dir("sokoban", EXACT_MODE="graph_cv").startswith("exact_graph_cv_")
+
+
+def test_prepared_data_paths_are_bound_to_requested_sizes() -> None:
+    pytest.importorskip("hydra")
+    config = _preflight("sokoban", TRAIN_SIZE="2", VALIDATION_SIZE="3")
+    assert "train_files: /root/autodl-tmp/data/verl-agent/train2_val3/text/train.parquet" in config
+    assert "val_files: /root/autodl-tmp/data/verl-agent/train2_val3/text/test.parquet" in config

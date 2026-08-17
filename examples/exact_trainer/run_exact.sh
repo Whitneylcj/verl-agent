@@ -73,8 +73,9 @@ fi
 loss_tag=${loss_agg_mode//-/_}
 experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${environment_name}_${model_tag}_seed${seed}"
 run_output_dir="${output_root}/${experiment_name}"
-train_file="${data_root}/text/train.parquet"
-validation_file="${data_root}/text/test.parquet"
+prepared_data_root="${data_root}/train${train_size}_val${validation_size}"
+train_file="${prepared_data_root}/text/train.parquet"
+validation_file="${prepared_data_root}/text/test.parquet"
 
 common_overrides=(
   "algorithm.adv_estimator=${algorithm_name}"
@@ -184,7 +185,7 @@ fi
 if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then
   python3 -m examples.data_preprocess.prepare \
     --mode text \
-    --local_dir "${data_root}" \
+    --local_dir "${prepared_data_root}" \
     --train_data_size "${train_size}" \
     --val_data_size "${validation_size}"
 fi

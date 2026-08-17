@@ -112,6 +112,11 @@ MAX_ENV_STEPS=60 MAX_GENERATED_TOKENS=15360 TOTAL_EPOCHS=1 \
 PILOT_AUTHORIZED=1 bash examples/exact_trainer/run_sokoban.sh
 ```
 
+Prepared parquet inputs are size-addressed under
+`data/verl-agent/trainN_valM/text/`. Changing `TRAIN_SIZE` or
+`VALIDATION_SIZE` therefore cannot silently reuse a larger prior dataset; the
+three matched estimator stages share the same size-addressed files.
+
 The same `MODEL_PATH`, seed, sizes, budgets, optimizer, and schedule must be
 used for the official GRPO baseline, the sequence-score-matched GRPO control,
 and EXACT. Only start these GPU runs after explicit authorization.
