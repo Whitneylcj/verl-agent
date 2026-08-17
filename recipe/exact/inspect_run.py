@@ -26,6 +26,7 @@ DEFAULT_METRICS = (
     "exact/appworld_argument_span_rate",
     "exact/appworld_factor_opaque_rate",
     "exact/appworld_version_supported",
+    "exact/appworld_source_supported",
     "exact/appworld_factor_compile_fallback_rate",
     "exact/credit_std",
     "exact/probe_seconds_per_snapshot",
@@ -222,6 +223,17 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             (
                 "verify the installed AppWorld source and data versions",
                 "retain the global-write fallback until the new source is audited",
+            ),
+        )
+    appworld_source_supported = latest("exact/appworld_source_supported")
+    if appworld_source_supported is not None and appworld_source_supported < 1:
+        add(
+            "unsupported_appworld_graph_source",
+            "high",
+            {"exact/appworld_source_supported": appworld_source_supported},
+            (
+                "verify the installed AppWorld Git revision against the schema audit",
+                "retain the global-write fallback until that exact source is audited",
             ),
         )
     appworld_compile_fallback = latest("exact/appworld_factor_compile_fallback_rate")

@@ -233,6 +233,7 @@ def test_observer_alerts_on_appworld_graph_fallbacks(tmp_path):
             **_metrics(),
             "exact/appworld_factor_opaque_rate": 0.25,
             "exact/appworld_version_supported": 0.0,
+            "exact/appworld_source_supported": 0.0,
             "exact/appworld_factor_compile_fallback_rate": 1.0,
         },
         [],
@@ -242,6 +243,7 @@ def test_observer_alerts_on_appworld_graph_fallbacks(tmp_path):
     assert set(alert["warnings"]) >= {
         "partial_appworld_factor_graph",
         "unsupported_appworld_graph_version",
+        "unsupported_appworld_graph_source",
         "appworld_factor_compile_failure",
     }
 

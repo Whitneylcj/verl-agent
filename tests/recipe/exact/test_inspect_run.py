@@ -74,6 +74,7 @@ def test_inspect_run_diagnoses_appworld_graph_fallbacks(tmp_path):
             "metrics": {
                 "exact/appworld_factor_opaque_rate": 0.2,
                 "exact/appworld_version_supported": 0.0,
+                "exact/appworld_source_supported": 0.0,
                 "exact/appworld_factor_compile_fallback_rate": 1.0,
             },
         },
@@ -83,6 +84,7 @@ def test_inspect_run_diagnoses_appworld_graph_fallbacks(tmp_path):
     assert {
         "partial_appworld_factor_graph",
         "unsupported_appworld_graph_version",
+        "unsupported_appworld_graph_source",
         "appworld_factor_compile_failure",
     } <= codes
 

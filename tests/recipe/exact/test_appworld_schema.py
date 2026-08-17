@@ -62,7 +62,10 @@ def test_compile_appworld_factor_reads_tracks_dataflow_and_fails_closed():
     assert task_specific.read_sets[appworld_factor_id("dynamic model lookup")] == (appworld_model_resource("phone", "GlobalTextMessage"),)
 
 
-def _registry(version="0.2.0"):
+AUDITED_APPWORLD_REVISION = "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a"
+
+
+def _registry(version="0.2.0.dev0", revision=AUDITED_APPWORLD_REVISION):
     return build_appworld_effect_registry(
         api_docs={
             "venmo": {"create_payment_request": {}},
@@ -77,12 +80,13 @@ def _registry(version="0.2.0"):
             "venmo": ("Notification", "PaymentRequest"),
         },
         appworld_version=version,
+        appworld_source_revision=revision,
     )
 
 
 def test_effect_registry_uses_audited_service_closure_and_version_fallback():
     registry = _registry()
-    assert _registry("0.2.0.dev0")["version_supported"] is True
+    assert registry["source_supported"] is True
     venmo_writes = set(registry["api_possible_write_sets"]["venmo.create_payment_request"])
     assert appworld_model_resource("venmo", "PaymentRequest") in venmo_writes
     assert appworld_model_resource("venmo", "Notification") in venmo_writes
@@ -92,6 +96,9 @@ def test_effect_registry_uses_audited_service_closure_and_version_fallback():
     fallback = _registry("9.9.9")
     assert fallback["version_supported"] is False
     assert set(fallback["api_possible_write_sets"]["venmo.create_payment_request"]) == set(fallback["all_model_resources"])
+    wrong_source = _registry(revision="wrong")
+    assert wrong_source["source_supported"] is False
+    assert set(wrong_source["api_possible_write_sets"]["venmo.create_payment_request"]) == set(wrong_source["all_model_resources"])
 
 
 def test_resolve_effect_schema_splits_selector_from_prefix_known_arguments():

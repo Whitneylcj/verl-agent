@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from textwrap import dedent
 from typing import Any, Mapping, Sequence
 
@@ -18,7 +20,7 @@ from recipe.exact.appworld_adapter import parse_json_api_action
 ALL_RESOURCE = "exact.resource.all"
 UNKNOWN_RESOURCE = "exact.resource.unknown"
 POLICY_CONTEXT_RESOURCE = "appworld.policy_context"
-SUPPORTED_APPWORLD_SCHEMA_VERSIONS = frozenset({"0.2.0", "0.2.0.dev0"})
+SUPPORTED_APPWORLD_SCHEMA_SOURCES = frozenset({("0.2.0.dev0", "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a")})
 _AUDITED_CROSS_APP_SERVICES = frozenset({"admin", "file_system", "gmail", "phone"})
 
 
@@ -29,6 +31,34 @@ def appworld_model_resource(app_name: str, model_name: str) -> str:
 def appworld_factor_id(requirement: str) -> str:
     digest = hashlib.sha256(requirement.strip().encode("utf-8")).hexdigest()[:16]
     return f"test:{digest}"
+
+
+def detect_appworld_source_revision(module_file: str | Path) -> str | None:
+    """Return the containing Git revision for an editable AppWorld install."""
+
+    module_path = Path(module_file).expanduser().resolve()
+    for parent in (module_path.parent, *module_path.parents):
+        if not (parent / ".git").exists():
+            continue
+        try:
+            revision = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=parent,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            status = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=parent,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            return f"{revision}+dirty" if status else revision
+        except (OSError, subprocess.CalledProcessError):
+            return None
+    return None
 
 
 @dataclass(frozen=True)
@@ -402,6 +432,7 @@ def build_appworld_effect_registry(
     api_docs: Mapping[str, Mapping[str, Any]],
     app_to_model_names: Mapping[str, Sequence[str]],
     appworld_version: str,
+    appworld_source_revision: str | None = None,
 ) -> dict[str, Any]:
     """Build a version-gated, task-visible API-to-possible-writes registry."""
 
@@ -409,11 +440,15 @@ def build_appworld_effect_registry(
     all_resources = tuple(sorted({item for values in app_resources.values() for item in values}))
     if not all_resources:
         all_resources = (ALL_RESOURCE,)
-    supported = appworld_version in SUPPORTED_APPWORLD_SCHEMA_VERSIONS
+    version_supported = appworld_version in {version for version, _ in SUPPORTED_APPWORLD_SCHEMA_SOURCES}
+    source_supported = (
+        appworld_version,
+        appworld_source_revision,
+    ) in SUPPORTED_APPWORLD_SCHEMA_SOURCES
     shared_resources = {item for app_name in _AUDITED_CROSS_APP_SERVICES for item in app_resources.get(app_name, ())}
     api_possible_write_sets = {}
     for app_name, api_name_to_doc in api_docs.items():
-        if supported:
+        if source_supported:
             possible_writes = set(app_resources.get(app_name, ())) | shared_resources
             if not possible_writes:
                 possible_writes = set(all_resources)
@@ -424,11 +459,13 @@ def build_appworld_effect_registry(
     return {
         "kind": "appworld-prefix-effect-v1",
         "appworld_version": appworld_version,
-        "version_supported": supported,
+        "appworld_source_revision": appworld_source_revision,
+        "version_supported": version_supported,
+        "source_supported": source_supported,
         "all_model_resources": all_resources,
         "selector_possible_write_set": all_resources,
         "api_possible_write_sets": api_possible_write_sets,
-        "certificate": ("appworld-0.2.0-own-app-plus-audited-service-closure" if supported else "unsupported-version-global-write-fallback"),
+        "certificate": ("appworld-0.2.0.dev0-a072b7a-own-app-plus-audited-service-closure" if source_supported else "unsupported-source-global-write-fallback"),
     }
 
 
@@ -517,6 +554,7 @@ def resolve_appworld_effect_schema(
         "spans": spans,
         "resolution_fallback": len(spans) == 1,
         "version_supported": bool(registry["version_supported"]),
+        "source_supported": bool(registry["source_supported"]),
         "factor_count": int(registry.get("factor_count", 0)),
         "opaque_factor_count": int(registry.get("opaque_factor_count", 0)),
         "factor_schema_compile_fallback": bool(registry.get("factor_schema_compile_fallback", False)),

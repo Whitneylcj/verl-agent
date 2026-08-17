@@ -10,4 +10,5 @@ python3 -m recipe.exact.probe_appworld_exact_g \
   --port-file "${APPWORLD_PORT_FILE}" \
   --output "${probe_path}" \
   "$@"
+python3 -m recipe.exact.probe_appworld_exact_g --verify "${probe_path}"
 printf 'appworld_exact_g_probe=%s\n' "${probe_path}"

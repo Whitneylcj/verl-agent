@@ -42,6 +42,7 @@ _COMPARISON_METRICS = (
     "exact/appworld_argument_span_rate",
     "exact/appworld_factor_opaque_rate",
     "exact/appworld_version_supported",
+    "exact/appworld_source_supported",
     "exact/appworld_factor_compile_fallback_rate",
     "exact/credit_std",
 )

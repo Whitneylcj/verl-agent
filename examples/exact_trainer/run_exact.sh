@@ -171,6 +171,8 @@ python3 -m recipe.exact.toy_audit --verify "${EXACT_TOY_AUDIT_PATH}"
 if [[ "${environment_name}" == "appworld" && "${algorithm_name}" == "exact" ]]; then
   export APPWORLD_SCHEMA_AUDIT_PATH=${APPWORLD_SCHEMA_AUDIT_PATH:-/root/autodl-tmp/config/exact/appworld-schema-audit.json}
   python3 -m recipe.exact.audit_appworld_schema --verify "${APPWORLD_SCHEMA_AUDIT_PATH}"
+  export APPWORLD_EXACT_G_PROBE_PATH=${APPWORLD_EXACT_G_PROBE_PATH:-/root/autodl-tmp/config/exact/appworld-real-probe.json}
+  python3 -m recipe.exact.probe_appworld_exact_g --verify "${APPWORLD_EXACT_G_PROBE_PATH}"
 fi
 
 if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then

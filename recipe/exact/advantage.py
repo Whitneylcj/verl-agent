@@ -33,17 +33,13 @@ def _config_get(config: Any, key: str, default: Any = None) -> Any:
 def _snapshot_from_record(record: Any, checkpoint_id: int) -> FactorSnapshot:
     if isinstance(record, FactorSnapshot):
         if record.checkpoint_id != checkpoint_id:
-            raise ValueError(
-                f"snapshot checkpoint {record.checkpoint_id} does not match expected {checkpoint_id}"
-            )
+            raise ValueError(f"snapshot checkpoint {record.checkpoint_id} does not match expected {checkpoint_id}")
         return record
     if not isinstance(record, Mapping):
         raise TypeError("EXACT factor snapshots must be mappings or FactorSnapshot instances")
     recorded_checkpoint = int(record.get("checkpoint_id", checkpoint_id))
     if recorded_checkpoint != checkpoint_id:
-        raise ValueError(
-            f"snapshot checkpoint {recorded_checkpoint} does not match expected {checkpoint_id}"
-        )
+        raise ValueError(f"snapshot checkpoint {recorded_checkpoint} does not match expected {checkpoint_id}")
     return FactorSnapshot(
         checkpoint_id=checkpoint_id,
         factor_ids=tuple(record["factor_ids"]),
@@ -63,10 +59,7 @@ def _make_potential(factor_ids: Sequence[str], config: Any) -> IdentityPotential
         missing = set(factor_ids) - set(weights_config)
         extra = set(weights_config) - set(factor_ids)
         if missing or extra:
-            raise ValueError(
-                f"potential weight keys must exactly match factor IDs; missing={sorted(missing)}, "
-                f"extra={sorted(extra)}"
-            )
+            raise ValueError(f"potential weight keys must exactly match factor IDs; missing={sorted(missing)}, extra={sorted(extra)}")
         weights = np.asarray([weights_config[factor_id] for factor_id in factor_ids], dtype=np.float64)
     else:
         weights = np.asarray(weights_config, dtype=np.float64)
@@ -120,18 +113,11 @@ def _compile_row_routes(
     else:
         raise TypeError("exact_effect_schema must be a mapping")
 
-    base_span_ids = [
-        str(record.get("span_id", f"span:{span_position}"))
-        for span_position, record in enumerate(span_records)
-    ]
+    base_span_ids = [str(record.get("span_id", f"span:{span_position}")) for span_position, record in enumerate(span_records)]
     if len(base_span_ids) != len(set(base_span_ids)):
         raise ValueError("effect span IDs must be unique within one response")
-    span_id_map = {
-        base_span_id: f"row:{row}:{base_span_id}" for base_span_id in base_span_ids
-    }
-    schema_resolution_fallback = bool(
-        isinstance(schema, Mapping) and schema.get("resolution_fallback", False)
-    )
+    span_id_map = {base_span_id: f"row:{row}:{base_span_id}" for base_span_id in base_span_ids}
+    schema_resolution_fallback = bool(isinstance(schema, Mapping) and schema.get("resolution_fallback", False))
 
     routes: list[SpanRoute] = []
     offsets: list[tuple[int, int]] = []
@@ -143,9 +129,7 @@ def _compile_row_routes(
         start = int(record.get("token_start", 0))
         end = int(record.get("token_end", valid_response_length))
         if start < 0 or end > valid_response_length or end <= start:
-            raise ValueError(
-                f"invalid effect span [{start}, {end}) for response length {valid_response_length}"
-            )
+            raise ValueError(f"invalid effect span [{start}, {end}) for response length {valid_response_length}")
         coverage[start:end] += 1
         route_kind = str(record.get("route_kind", "explicit"))
         opaque = bool(
@@ -161,14 +145,7 @@ def _compile_row_routes(
             descendant_ids = ()
         else:
             factor_ids = tuple(str(value) for value in record["descendant_factor_ids"])
-            descendant_ids = tuple(
-                atom.atom_id
-                for atom in atoms
-                if not atom.is_residual
-                and atom.step_id is not None
-                and atom.step_id >= step_id
-                and atom.factor_id in factor_ids
-            )
+            descendant_ids = tuple(atom.atom_id for atom in atoms if not atom.is_residual and atom.step_id is not None and atom.step_id >= step_id and atom.factor_id in factor_ids)
         span = EffectSpan(
             span_id=span_id_map[base_span_ids[span_position]],
             step_id=step_id,
@@ -176,10 +153,7 @@ def _compile_row_routes(
             token_end=end,
             bucket=str(record.get("bucket", "default")),
             possible_write_set=tuple(record.get("possible_write_set", ())),
-            control_parents=tuple(
-                span_id_map.get(str(parent), str(parent))
-                for parent in record.get("control_parents", ())
-            ),
+            control_parents=tuple(span_id_map.get(str(parent), str(parent)) for parent in record.get("control_parents", ())),
             context_sources=tuple(record.get("context_sources", ())),
             opaque=opaque,
         )
@@ -275,6 +249,7 @@ def compute_exact_advantage(
     appworld_argument_span_count = 0
     appworld_opaque_factor_rates: list[float] = []
     appworld_version_supported: list[float] = []
+    appworld_source_supported: list[float] = []
     appworld_factor_compile_fallbacks: list[float] = []
 
     for trajectory_id, rows in trajectory_rows.items():
@@ -290,9 +265,7 @@ def compute_exact_advantage(
         trajectory_factor_atoms = [atom for atom in conserved.atoms if not atom.is_residual]
         factor_atom_count += len(trajectory_factor_atoms)
         changed_factor_atom_count += sum(abs(atom.value) > 1e-12 for atom in trajectory_factor_atoms)
-        unknown_read_atom_count += sum(
-            "exact.resource.unknown" in atom.read_set for atom in trajectory_factor_atoms
-        )
+        unknown_read_atom_count += sum("exact.resource.unknown" in atom.read_set for atom in trajectory_factor_atoms)
 
         graph_started = time.perf_counter()
         routes: list[SpanRoute] = []
@@ -303,15 +276,10 @@ def compute_exact_advantage(
                 appworld_row_count += 1
                 factor_count = int(row_schema.get("factor_count", 0))
                 opaque_factor_count = int(row_schema.get("opaque_factor_count", 0))
-                appworld_opaque_factor_rates.append(
-                    opaque_factor_count / max(factor_count, 1)
-                )
-                appworld_version_supported.append(
-                    float(bool(row_schema.get("version_supported", False)))
-                )
-                appworld_factor_compile_fallbacks.append(
-                    float(bool(row_schema.get("factor_schema_compile_fallback", False)))
-                )
+                appworld_opaque_factor_rates.append(opaque_factor_count / max(factor_count, 1))
+                appworld_version_supported.append(float(bool(row_schema.get("version_supported", False))))
+                appworld_source_supported.append(float(bool(row_schema.get("source_supported", False))))
+                appworld_factor_compile_fallbacks.append(float(bool(row_schema.get("factor_schema_compile_fallback", False))))
             valid_length = int(base_response_mask[row].sum().item())
             row_routes, offsets, row_fallbacks = _compile_row_routes(
                 row=row,
@@ -321,12 +289,8 @@ def compute_exact_advantage(
                 atoms=conserved.atoms,
             )
             routes.extend(row_routes)
-            resource_graph_span_count += sum(
-                route.route_kind == "resource_graph" for route in row_routes
-            )
-            appworld_argument_span_count += sum(
-                route.span.bucket == "appworld.arguments" for route in row_routes
-            )
+            resource_graph_span_count += sum(route.route_kind == "resource_graph" for route in row_routes)
+            appworld_argument_span_count += sum(route.span.bucket == "appworld.arguments" for route in row_routes)
             placements.extend((row, start, end) for start, end in offsets)
             fallback_count += row_fallbacks
             span_count += len(row_routes)
@@ -409,18 +373,11 @@ def compute_exact_advantage(
     if appworld_row_count:
         metrics.update(
             {
-                "exact/appworld_argument_span_rate": float(
-                    appworld_argument_span_count / appworld_row_count
-                ),
-                "exact/appworld_factor_opaque_rate": float(
-                    np.mean(appworld_opaque_factor_rates)
-                ),
-                "exact/appworld_version_supported": float(
-                    min(appworld_version_supported)
-                ),
-                "exact/appworld_factor_compile_fallback_rate": float(
-                    np.mean(appworld_factor_compile_fallbacks)
-                ),
+                "exact/appworld_argument_span_rate": float(appworld_argument_span_count / appworld_row_count),
+                "exact/appworld_factor_opaque_rate": float(np.mean(appworld_opaque_factor_rates)),
+                "exact/appworld_version_supported": float(min(appworld_version_supported)),
+                "exact/appworld_source_supported": float(min(appworld_source_supported)),
+                "exact/appworld_factor_compile_fallback_rate": float(np.mean(appworld_factor_compile_fallbacks)),
             }
         )
     for quantile in (5, 25, 50, 75, 95):

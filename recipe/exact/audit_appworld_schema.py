@@ -20,6 +20,7 @@ from recipe.exact.appworld_schema import (
     appworld_factor_id,
     build_appworld_effect_registry,
     compile_appworld_factor_reads,
+    detect_appworld_source_revision,
 )
 
 
@@ -37,7 +38,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def _git_state() -> dict[str, Any]:
+def exact_git_state() -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[2]
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -79,15 +80,17 @@ def audit_appworld_schema(
     app_names = tuple(sorted(set(get_all_apps()) | {"admin"}))
     app_to_model_names = {app_name: tuple(sorted(get_name_to_model(app_name))) for app_name in app_names}
     api_docs = ApiDocCollection.load(load_apps=tuple(get_all_apps(skip_admin=True)))
+    source_revision = detect_appworld_source_revision(appworld.__file__)
     registry = build_appworld_effect_registry(
         api_docs=api_docs,
         app_to_model_names=app_to_model_names,
         appworld_version=str(appworld.__version__),
+        appworld_source_revision=source_revision,
     )
     all_resources = tuple(registry["all_model_resources"])
     complete_task_inventory = task_ids is None
     selected_task_ids = list(task_ids) if task_ids is not None else _task_ids()
-    git_state = _git_state()
+    git_state = exact_git_state()
 
     task_failures = []
     task_failure_count = 0
@@ -126,12 +129,14 @@ def audit_appworld_schema(
                 task_failures.append({"task_id": task_id, "error": f"{type(error).__name__}: {error}"})
 
     opaque_rate = opaque_factor_count / max(factor_count, 1)
-    passed = task_failure_count == 0 and not mismatch_samples and bool(registry["version_supported"]) and opaque_rate <= max_opaque_rate and git_state["tracked_clean"]
+    passed = task_failure_count == 0 and not mismatch_samples and bool(registry["source_supported"]) and opaque_rate <= max_opaque_rate and git_state["tracked_clean"]
     return {
         "schema_version": "exact.appworld.schema-audit.v1",
         "passed": passed,
         "appworld_version": str(appworld.__version__),
         "version_supported": bool(registry["version_supported"]),
+        "appworld_source_revision": source_revision,
+        "source_supported": bool(registry["source_supported"]),
         "git": git_state,
         "complete_task_inventory": complete_task_inventory,
         "task_count": len(selected_task_ids),
@@ -154,7 +159,8 @@ def audit_appworld_schema(
 def verify_appworld_schema_audit(path: str | Path) -> dict[str, Any]:
     audit_path = Path(path).expanduser().resolve()
     report = json.loads(audit_path.read_text(encoding="utf-8"))
-    current_git = _git_state()
+    current_git = exact_git_state()
+    current_source_revision = detect_appworld_source_revision(appworld.__file__)
     errors = []
     if report.get("schema_version") != "exact.appworld.schema-audit.v1":
         errors.append("unsupported schema_version")
@@ -170,11 +176,14 @@ def verify_appworld_schema_audit(path: str | Path) -> dict[str, Any]:
         errors.append("current checkout has tracked changes")
     if report.get("appworld_version") != str(appworld.__version__):
         errors.append("AppWorld schema audit package version does not match the runtime")
+    if report.get("appworld_source_revision") != current_source_revision:
+        errors.append("AppWorld schema audit source revision does not match the runtime")
     return {
         "status": "pass" if not errors else "no_go",
         "audit_path": str(audit_path),
         "commit": current_git["commit"],
         "appworld_version": str(appworld.__version__),
+        "appworld_source_revision": current_source_revision,
         "errors": errors,
     }
 

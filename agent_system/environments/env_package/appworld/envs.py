@@ -67,6 +67,7 @@ class AppWorldWorker:
         from recipe.exact.appworld_schema import (
             build_appworld_effect_registry,
             compile_appworld_factor_reads,
+            detect_appworld_source_revision,
         )
         from recipe.exact.env_probes import appworld_factor_snapshot
 
@@ -84,6 +85,7 @@ class AppWorldWorker:
             api_docs=api_docs,
             app_to_model_names=app_to_model_names,
             appworld_version=str(appworld.__version__),
+            appworld_source_revision=detect_appworld_source_revision(appworld.__file__),
         )
         all_resources = tuple(registry["all_model_resources"])
         compile_error = None

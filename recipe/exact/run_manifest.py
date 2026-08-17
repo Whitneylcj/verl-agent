@@ -93,9 +93,31 @@ def _appworld_schema_audit_evidence() -> dict[str, Any] | None:
         "passed": report.get("passed"),
         "commit": report.get("git", {}).get("commit"),
         "appworld_version": report.get("appworld_version"),
+        "appworld_source_revision": report.get("appworld_source_revision"),
         "task_count": report.get("task_count"),
         "factor_count": report.get("factor_count"),
         "opaque_factor_rate": report.get("opaque_factor_rate"),
+    }
+
+
+def _appworld_probe_evidence() -> dict[str, Any] | None:
+    raw_path = os.environ.get("APPWORLD_EXACT_G_PROBE_PATH")
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser().resolve()
+    payload = path.read_bytes()
+    report = json.loads(payload)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": report.get("schema_version"),
+        "status": report.get("status"),
+        "commit": report.get("git", {}).get("commit"),
+        "appworld_version": report.get("appworld_version"),
+        "appworld_source_revision": report.get("appworld_source_revision"),
+        "task_id": report.get("task_id"),
+        "action_valid": report.get("action_valid"),
+        "resolution_fallback": report.get("resolution_fallback"),
     }
 
 
@@ -144,12 +166,14 @@ def build_manifest(
                 "EXACT_CONSOLE_LOG",
                 "EXACT_TOY_AUDIT_PATH",
                 "APPWORLD_SCHEMA_AUDIT_PATH",
+                "APPWORLD_EXACT_G_PROBE_PATH",
             )
             if os.environ.get(key)
         },
         "preflight": {
             "toy_audit": _toy_audit_evidence(),
             "appworld_schema_audit": _appworld_schema_audit_evidence(),
+            "appworld_real_probe": _appworld_probe_evidence(),
         },
         "hydra_overrides": redacted_overrides,
         "hydra_overrides_sha256": override_digest,

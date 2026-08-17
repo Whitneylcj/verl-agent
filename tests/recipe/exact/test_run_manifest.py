@@ -88,7 +88,7 @@ def test_manifest_hashes_the_verified_toy_audit(tmp_path, monkeypatch):
 
 def test_manifest_hashes_the_verified_appworld_schema_audit(tmp_path, monkeypatch):
     audit_path = tmp_path / "appworld-schema-audit.json"
-    payload = b'{"schema_version":"exact.appworld.schema-audit.v1","passed":true,"git":{"commit":"def"},"appworld_version":"0.2.0.dev0","task_count":732,"factor_count":3660,"opaque_factor_rate":0.01}\n'
+    payload = b'{"schema_version":"exact.appworld.schema-audit.v1","passed":true,"git":{"commit":"def"},"appworld_version":"0.2.0.dev0","appworld_source_revision":"source","task_count":732,"factor_count":3660,"opaque_factor_rate":0.01}\n'
     audit_path.write_bytes(payload)
     monkeypatch.setenv("APPWORLD_SCHEMA_AUDIT_PATH", str(audit_path))
 
@@ -106,7 +106,35 @@ def test_manifest_hashes_the_verified_appworld_schema_audit(tmp_path, monkeypatc
         "passed": True,
         "commit": "def",
         "appworld_version": "0.2.0.dev0",
+        "appworld_source_revision": "source",
         "task_count": 732,
         "factor_count": 3660,
         "opaque_factor_rate": 0.01,
+    }
+
+
+def test_manifest_hashes_the_verified_appworld_real_probe(tmp_path, monkeypatch):
+    probe_path = tmp_path / "appworld-real-probe.json"
+    payload = b'{"schema_version":"exact.appworld.real-probe.v1","status":"pass","git":{"commit":"ghi"},"appworld_version":"0.2.0.dev0","appworld_source_revision":"source","task_id":"task_1","action_valid":true,"resolution_fallback":false}\n'
+    probe_path.write_bytes(payload)
+    monkeypatch.setenv("APPWORLD_EXACT_G_PROBE_PATH", str(probe_path))
+
+    manifest = build_manifest(
+        repo_root=Path(__file__).resolve().parents[3],
+        experiment=_experiment(),
+        overrides=[],
+        include_hardware=False,
+    )
+
+    assert manifest["preflight"]["appworld_real_probe"] == {
+        "path": str(probe_path.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": "exact.appworld.real-probe.v1",
+        "status": "pass",
+        "commit": "ghi",
+        "appworld_version": "0.2.0.dev0",
+        "appworld_source_revision": "source",
+        "task_id": "task_1",
+        "action_valid": True,
+        "resolution_fallback": False,
     }

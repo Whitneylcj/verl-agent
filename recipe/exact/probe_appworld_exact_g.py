@@ -9,6 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Sequence
 
+import appworld
 import numpy as np
 from omegaconf import OmegaConf
 
@@ -17,6 +18,8 @@ from agent_system.environments.env_package.appworld import (
     appworld_projection,
     build_appworld_envs,
 )
+from recipe.exact.appworld_schema import detect_appworld_source_revision
+from recipe.exact.audit_appworld_schema import exact_git_state
 
 
 class _CharacterTokenizer:
@@ -72,6 +75,8 @@ def run_probe(
             raise AssertionError("unexpected AppWorld prefix schema")
         if not registry["version_supported"]:
             raise AssertionError("installed AppWorld version is not graph-audited")
+        if not registry["source_supported"]:
+            raise AssertionError("installed AppWorld source revision is not graph-audited")
         if registry["factor_schema_compile_fallback"]:
             raise AssertionError(registry["factor_schema_compile_error"])
         if registry["opaque_factor_count"]:
@@ -107,6 +112,9 @@ def run_probe(
         result = {
             "schema_version": "exact.appworld.real-probe.v1",
             "status": "pass",
+            "git": exact_git_state(),
+            "appworld_version": str(appworld.__version__),
+            "appworld_source_revision": detect_appworld_source_revision(appworld.__file__),
             "task_id": reset_infos[0]["task_id"],
             "factor_count": len(pre_snapshot["factor_ids"]),
             "opaque_factor_count": int(registry["opaque_factor_count"]),
@@ -125,15 +133,56 @@ def run_probe(
         manager.close()
 
 
+def verify_probe(path: str | Path) -> dict[str, Any]:
+    probe_path = Path(path).expanduser().resolve()
+    report = json.loads(probe_path.read_text(encoding="utf-8"))
+    current_git = exact_git_state()
+    current_source_revision = detect_appworld_source_revision(appworld.__file__)
+    errors = []
+    if report.get("schema_version") != "exact.appworld.real-probe.v1":
+        errors.append("unsupported schema_version")
+    if report.get("status") != "pass":
+        errors.append("AppWorld real probe did not pass")
+    if report.get("git", {}).get("commit") != current_git["commit"]:
+        errors.append("AppWorld real probe commit does not match the current checkout")
+    if not report.get("git", {}).get("tracked_clean", False):
+        errors.append("AppWorld real probe was generated from a tracked-dirty checkout")
+    if not current_git["tracked_clean"]:
+        errors.append("current checkout has tracked changes")
+    if report.get("appworld_version") != str(appworld.__version__):
+        errors.append("AppWorld real probe package version does not match the runtime")
+    if report.get("appworld_source_revision") != current_source_revision:
+        errors.append("AppWorld real probe source revision does not match the runtime")
+    if not report.get("action_valid", False):
+        errors.append("AppWorld real probe action was invalid")
+    if report.get("resolution_fallback", True):
+        errors.append("AppWorld real probe did not resolve selector/argument spans")
+    if int(report.get("opaque_factor_count", -1)) != 0:
+        errors.append("AppWorld real probe contains opaque verifier factors")
+    return {
+        "status": "pass" if not errors else "no_go",
+        "probe_path": str(probe_path),
+        "commit": current_git["commit"],
+        "appworld_version": str(appworld.__version__),
+        "appworld_source_revision": current_source_revision,
+        "errors": errors,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="train")
     parser.add_argument("--port-file", default=os.environ.get("APPWORLD_PORT_FILE", "appworld_ports.ports"))
-    parser.add_argument("--output", type=Path)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--output", type=Path)
+    mode.add_argument("--verify", type=Path)
     args = parser.parse_args(argv)
+    if args.verify is not None:
+        result = verify_probe(args.verify)
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if result["status"] == "pass" else 1
     result = run_probe(dataset_name=args.dataset, port_file=args.port_file)
-    if args.output is not None:
-        _write_json_atomic(args.output, result)
+    _write_json_atomic(args.output, result)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

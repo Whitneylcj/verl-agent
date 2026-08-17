@@ -122,10 +122,7 @@ def build_trajectory_diagnostics(
     for row in np.flatnonzero(~padding):
         trajectory_rows.setdefault(str(batch.non_tensor_batch["traj_uid"][row]), []).append(int(row))
     trace_by_id = {str(trace["trajectory_id"]): trace for trace in traces}
-    factor_probe_available = all(
-        key in batch.non_tensor_batch
-        for key in ("exact_factor_pre", "exact_factor_post", "exact_effect_schema")
-    )
+    factor_probe_available = all(key in batch.non_tensor_batch for key in ("exact_factor_pre", "exact_factor_post", "exact_effect_schema"))
     diagnostics = []
     for trajectory_id, rows in trajectory_rows.items():
         rows.sort(key=lambda row: int(step_ids[row]))
@@ -141,11 +138,7 @@ def build_trajectory_diagnostics(
         factor_change_steps = []
         factor_decrease_steps = []
         if factor_probe_available:
-            fallback_steps = [
-                int(step_ids[row])
-                for row in rows
-                if _schema_uses_fallback(batch.non_tensor_batch["exact_effect_schema"][row])
-            ]
+            fallback_steps = [int(step_ids[row]) for row in rows if _schema_uses_fallback(batch.non_tensor_batch["exact_effect_schema"][row])]
             for row in rows:
                 before = _snapshot_values(batch.non_tensor_batch["exact_factor_pre"][row])
                 after = _snapshot_values(batch.non_tensor_batch["exact_factor_post"][row])
@@ -157,11 +150,7 @@ def build_trajectory_diagnostics(
                     factor_decrease_steps.append(step_id)
 
         response_signatures = [_valid_response_signature(batch, row) for row in rows]
-        repeated_action_steps = [
-            int(step_ids[rows[position]])
-            for position in range(1, len(rows))
-            if response_signatures[position] == response_signatures[position - 1]
-        ]
+        repeated_action_steps = [int(step_ids[rows[position]]) for position in range(1, len(rows)) if response_signatures[position] == response_signatures[position - 1]]
         raw_outcomes = batch.non_tensor_batch.get(
             "trajectory_outcomes",
             np.asarray([{} for _ in range(len(batch))], dtype=object),
@@ -213,11 +202,7 @@ def build_trajectory_diagnostics(
                 "diagnostic_tags": tags,
                 "residual_ratio": residual_ratio,
                 "cone_density": float(trace["cone_density"]) if "cone_density" in trace else None,
-                "conservation_error": (
-                    float(trace["conservation_error"])
-                    if "conservation_error" in trace
-                    else None
-                ),
+                "conservation_error": (float(trace["conservation_error"]) if "conservation_error" in trace else None),
             }
         )
     return diagnostics
@@ -247,10 +232,7 @@ def summarize_trajectory_diagnostics(
     if any(bool(item.get("factor_probe_available")) for item in diagnostics):
         exact_only = {
             "no_factor_progress_rate": float(np.mean(["no_factor_progress" in item for item in tags])),
-            "factor_change_step_rate": float(
-                sum(len(item.get("factor_change_step_ids", ())) for item in diagnostics)
-                / max(total_steps, 1)
-            ),
+            "factor_change_step_rate": float(sum(len(item.get("factor_change_step_ids", ())) for item in diagnostics) / max(total_steps, 1)),
         }
         result.update({f"exact_diag/{key}": value for key, value in exact_only.items()})
     primary_success = [float(item["success"]["success_rate"]) for item in diagnostics if "success_rate" in item.get("success", {})]
@@ -324,10 +306,10 @@ class AgentRunObserver:
             warnings.append("opaque_schema_fallback")
         if float(metrics.get("exact/appworld_factor_opaque_rate", 0.0)) > 0:
             warnings.append("partial_appworld_factor_graph")
-        if "exact/appworld_version_supported" in metrics and float(
-            metrics["exact/appworld_version_supported"]
-        ) < 1:
+        if "exact/appworld_version_supported" in metrics and float(metrics["exact/appworld_version_supported"]) < 1:
             warnings.append("unsupported_appworld_graph_version")
+        if "exact/appworld_source_supported" in metrics and float(metrics["exact/appworld_source_supported"]) < 1:
+            warnings.append("unsupported_appworld_graph_source")
         if float(metrics.get("exact/appworld_factor_compile_fallback_rate", 0.0)) > 0:
             warnings.append("appworld_factor_compile_failure")
         return warnings
