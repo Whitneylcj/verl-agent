@@ -214,7 +214,12 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         return {'text': full_text_obs, 'image': image_obs, 'anchor': text_obs}, infos
     
     def step(self, text_actions: List[str]):
-        actions, valids = self.projection_f(text_actions, self.envs.get_admissible_commands)
+        action_pools = [list(pool) for pool in self.envs.get_admissible_commands]
+        actions, valids = self.projection_f(text_actions, action_pools)
+        execution_valids = [
+            str(action).strip().lower() in {str(candidate).strip().lower() for candidate in pool}
+            for action, pool in zip(actions, action_pools)
+        ]
         text_obs, image_obs, rewards, dones, infos = self.envs.step(actions)
         self.memory.store({'text_obs': self.pre_text_obs, 'action': actions})
         self.pre_text_obs = text_obs
@@ -223,9 +228,14 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         if infos[0].get("extra.gamefile") is None:
             infos = set_gamefile(infos, self.gamefile)
 
-        # add action_valid to infos
+        # Keep response syntax separate from whether the projected command was
+        # executable in the pre-step ALFWorld state.
         for i, info in enumerate(infos):
-            info['is_action_valid'] = to_numpy(valids[i])
+            syntax_valid = bool(valids[i])
+            execution_valid = bool(execution_valids[i])
+            info['is_action_syntax_valid'] = to_numpy(syntax_valid)
+            info['is_action_execution_valid'] = to_numpy(execution_valid)
+            info['is_action_valid'] = to_numpy(syntax_valid and execution_valid)
 
         next_observations = {'text': full_text_obs, 'image': image_obs, 'anchor': text_obs}
         rewards = to_numpy(rewards)

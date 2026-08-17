@@ -48,13 +48,17 @@ def alfworld_projection(actions: List[str], action_pools: List[List[str]]):
             admissible_actions = {str(action).strip().lower() for action in action_pools[i]}
             valids[i] = int(extracted_action in admissible_actions)
 
-        except:
+        except (AttributeError, IndexError, TypeError):
             actions[i] = actions[i][-30:]
 
-        # check <think>...</think>
-        think_start_idx = original_str.find("<think>")
-        think_end_idx = original_str.find("</think>")
-        if think_start_idx == -1 or think_end_idx == -1:
+        # Qwen-family models may emit either spelling. Keep reasoning bounded,
+        # while treating both established tag pairs as syntactically valid.
+        has_reasoning_block = (
+            "<think>" in original_str and "</think>" in original_str
+        ) or (
+            "<thinking>" in original_str and "</thinking>" in original_str
+        )
+        if not has_reasoning_block:
             valids[i] = 0
 
         # check if contains any Chinese characters

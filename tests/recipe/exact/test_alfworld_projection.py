@@ -1,7 +1,6 @@
 import importlib.util
 from pathlib import Path
 
-
 _PROJECTION_PATH = (
     Path(__file__).parents[3]
     / "agent_system/environments/env_package/alfworld/projection.py"
@@ -41,3 +40,13 @@ def test_alfworld_projection_still_rejects_missing_reasoning_tags():
 
     assert actions == ["look"]
     assert valids == [0]
+
+
+def test_alfworld_projection_accepts_qwen_thinking_alias():
+    actions, valids = alfworld_projection(
+        ["<thinking>The fridge is visible.</thinking><action>go to fridge 1</action>"],
+        [["look", "go to fridge 1"]],
+    )
+
+    assert actions == ["go to fridge 1"]
+    assert valids == [1]
