@@ -271,6 +271,17 @@ def test_observer_emits_soft_alerts_after_optimizer_metrics(tmp_path):
     assert "high_ppo_kl" in alert["warnings"]
 
 
+def test_observer_keeps_soft_alerts_in_completed_heartbeat(tmp_path):
+    observer = ExactObserver(tmp_path, grad_norm_warning=10.0)
+    metrics = {**_metrics(), "actor/grad_norm": 12.0}
+
+    observer.mark_completed(1, metrics)
+
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["status"] == "completed"
+    assert heartbeat["warnings"] == ["high_gradient_norm"]
+
+
 def test_observer_alerts_on_appworld_graph_fallbacks(tmp_path):
     observer = ExactObserver(tmp_path)
     observer.complete_step(

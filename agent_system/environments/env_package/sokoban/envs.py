@@ -83,7 +83,18 @@ class SokobanMultiProcessEnv(gym.Env):
         self.env_num = env_num
         self.num_processes = env_num * group_n
         self.mode = mode
-        np.random.seed(seed)
+        # Keep reset sampling local to this environment.  The previous global
+        # RNG made train/validation wrappers perturb one another and also gave
+        # every validation call a different task set, so before/after metrics
+        # were not paired on the same held-out rooms.
+        self._reset_rng = np.random.RandomState(seed)
+        self._validation_seeds = None
+        if not self.is_train:
+            self._validation_seeds = self._reset_rng.randint(
+                2**16,
+                2**32 - 1,
+                size=self.env_num,
+            )
 
         if env_kwargs is None:
             env_kwargs = {}
@@ -124,20 +135,23 @@ class SokobanMultiProcessEnv(gym.Env):
 
         return obs_list, reward_list, done_list, info_list
 
+    def _seeds_for_reset(self):
+        # Training gets fresh rooms, while validation replays one fixed suite
+        # so metrics from different checkpoints are directly comparable.
+        if self.is_train:
+            seeds = self._reset_rng.randint(0, 2**16 - 1, size=self.env_num)
+        else:
+            seeds = self._validation_seeds.copy()
+
+        # repeat the seeds for each group
+        return np.repeat(seeds, self.group_n).tolist()
+
     def reset(self):
         """
         Perform reset in parallel.
         :return: obs_list and info_list, the initial observations for each environment
         """
-        # randomly generate self.env_num seeds
-        if self.is_train:
-            seeds = np.random.randint(0, 2**16 - 1, size=self.env_num)
-        else:
-            seeds = np.random.randint(2**16, 2**32 - 1, size=self.env_num)
-
-        # repeat the seeds for each group
-        seeds = np.repeat(seeds, self.group_n)
-        seeds = seeds.tolist()
+        seeds = self._seeds_for_reset()
 
         # Send reset commands to all workers
         futures = []

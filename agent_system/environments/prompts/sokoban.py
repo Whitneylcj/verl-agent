@@ -40,8 +40,9 @@ Your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the grid literally and do not invent boxes or targets. Enclose at most two short reasoning sentences within <think> and </think> tags.
-Then output exactly one lowercase admissible action within <action> and </action> tags. Do not write anything after </action>.
+Read the grid literally and do not invent boxes or targets.
+Reply with exactly this one-line template: <think>one short sentence</think><action>direction</action>
+Replace direction with one lowercase admissible action. Do not add text or repeat a tag.
 """
 
 SOKOBAN_TEMPLATE = """
@@ -71,8 +72,9 @@ You are now at step {current_step} and your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the grid literally and do not invent boxes or targets. Enclose at most two short reasoning sentences within <think> and </think> tags.
-Then output exactly one lowercase admissible action within <action> and </action> tags. Do not write anything after </action>.
+Read the grid literally and do not invent boxes or targets.
+Reply with exactly this one-line template: <think>one short sentence</think><action>direction</action>
+Replace direction with one lowercase admissible action. Do not add text or repeat a tag.
 """
 
 SOKOBAN_VISUAL_TEMPLATE = """
@@ -93,6 +95,7 @@ Your current observation is shown in the image: <image>
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-Read the image literally and do not invent boxes or targets. Enclose at most two short reasoning sentences within <think> and </think> tags.
-Then output exactly one lowercase admissible action within <action> and </action> tags. Do not write anything after </action>.
+Read the image literally and do not invent boxes or targets.
+Reply with exactly this one-line template: <think>one short sentence</think><action>direction</action>
+Replace direction with one lowercase admissible action. Do not add text or repeat a tag.
 """

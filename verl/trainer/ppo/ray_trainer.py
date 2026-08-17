@@ -749,12 +749,6 @@ class RayPPOTrainer:
             if self.config.reward_model.enable and test_batch[0].non_tensor_batch["reward_model"]["style"] == "model":
                 return {}
 
-            # Store original inputs
-            input_ids = test_batch.batch["input_ids"]
-            # TODO: Can we keep special tokens except for padding tokens?
-            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
-            sample_inputs.extend(input_texts)
-
             batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
             non_tensor_batch_keys_to_pop = ["raw_prompt_ids", "data_source"]
             if "multi_modal_data" in test_batch.non_tensor_batch:
@@ -796,9 +790,15 @@ class RayPPOTrainer:
             print('validation generation end')
             del test_batch
             test_batch = test_output_gen_batch
-            # Store generated outputs
+            # The multi-turn collector returns one row per active environment
+            # step. Decode its aligned prompts instead of the original one-row
+            # dataset prompts; otherwise validation tables silently zip
+            # unrelated inputs and outputs and truncate longer trajectories.
+            prompt_ids = test_output_gen_batch.batch["prompts"]
             output_ids = test_output_gen_batch.batch["responses"]
+            input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in prompt_ids]
             output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
+            sample_inputs.extend(input_texts)
             sample_outputs.extend(output_texts)
 
             # test_batch = test_batch.union(test_output_gen_batch)
@@ -824,6 +824,24 @@ class RayPPOTrainer:
                         assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+
+        validation_data_dir = self.config.trainer.get("validation_data_dir", None)
+        if validation_data_dir:
+            exact_config = self.config.algorithm.get("exact", {})
+            monitor_config = exact_config.get("monitor", {}) if exact_config is not None else {}
+            if monitor_config.get("redact_text", True):
+                from recipe.exact.monitor import redact_rollout_text
+
+                max_text_chars = monitor_config.get("max_text_chars", 20_000)
+                sample_inputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in sample_inputs]
+                sample_outputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in sample_outputs]
+            self._dump_generations(
+                inputs=sample_inputs,
+                outputs=sample_outputs,
+                scores=sample_scores,
+                reward_extra_infos_dict={},
+                dump_path=validation_data_dir,
+            )
 
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
         data_sources = np.concatenate(data_source_lst, axis=0)

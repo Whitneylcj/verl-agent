@@ -546,14 +546,21 @@ class AgentRunObserver:
         self._write_heartbeat(status="running", step=step, metrics=metrics, warnings=final_warnings)
 
     def mark_completed(self, step: int, metrics: Mapping[str, Any]) -> None:
-        self._write_heartbeat(status="completed", step=step, metrics=metrics, warnings=[])
+        metrics = self._validated_metrics(metrics, step=step)
+        self._write_heartbeat(
+            status="completed",
+            step=step,
+            metrics=metrics,
+            warnings=self._metric_warnings(metrics),
+        )
 
     def mark_budget_reached(self, step: int, metrics: Mapping[str, Any]) -> None:
+        metrics = self._validated_metrics(metrics, step=step)
         self._write_heartbeat(
             status="budget_reached",
             step=step,
             metrics=metrics,
-            warnings=[],
+            warnings=self._metric_warnings(metrics),
         )
 
     def mark_failed(self, step: int, error: BaseException) -> None:
