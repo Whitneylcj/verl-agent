@@ -165,6 +165,11 @@ Persisted rollout text is size-bounded and redacts common credentials, email
 addresses, and phone numbers by default. Diagnostic tags are deterministic
 signals for investigation, not proof of a semantic root cause.
 
+The run inspector also emits bounded `diagnoses`: each entry records the exact
+metric or lifecycle state that crossed a deterministic threshold and the next
+checks to perform. Treat these entries as investigation hypotheses; the
+inspector never changes prompts, rewards, budgets, or optimizer settings.
+
 Compare all estimators using `agent_diag/success_rate`, invalid-step and
 trajectory rates, max-step/terminal-failure rates, repeated actions, reward,
 episode length, KL/clip fraction, entropy, gradient norm, response clipping,

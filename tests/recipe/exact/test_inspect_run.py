@@ -20,6 +20,7 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
                 "training/global_step": 1,
                 "actor/ppo_kl": 0.01,
                 "agent_diag/invalid_step_rate": 0.5,
+                "agent_diag/repeated_action_rate": 0.25,
             },
         },
     )
@@ -52,6 +53,8 @@ def test_inspect_run_reports_metric_trends_alerts_and_rollouts(tmp_path):
     assert report["recent_alerts"][0]["warnings"] == ["high_ppo_kl"]
     assert report["latest_validation"]["metrics"]["val/success_rate"] == 0.25
     assert report["rollout_samples"][0]["response"] == "bad action"
+    diagnosis_codes = {diagnosis["code"] for diagnosis in report["diagnoses"]}
+    assert {"high_invalid_action_rate", "policy_action_loop", "large_policy_update"} <= diagnosis_codes
 
 
 def test_inspect_run_handles_initialized_but_empty_monitor(tmp_path):
@@ -60,6 +63,7 @@ def test_inspect_run_handles_initialized_but_empty_monitor(tmp_path):
     assert report["run_state"] == "initializing"
     assert report["latest_step"] is None
     assert report["trends"] == {}
+    assert report["diagnoses"] == []
 
 
 def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
@@ -71,3 +75,14 @@ def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
     assert report["run_state"] == "launched_no_heartbeat"
     assert report["manifest"]["experiment"]["name"] == "pilot"
     assert report["resolved_config_present"] is False
+    assert report["diagnoses"] == [
+        {
+            "code": "startup_incomplete",
+            "severity": "high",
+            "evidence": {"run_state": "launched_no_heartbeat"},
+            "next_checks": [
+                "inspect the persisted console log",
+                "verify model/runtime initialization before changing training hyperparameters",
+            ],
+        }
+    ]

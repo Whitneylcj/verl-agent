@@ -7,7 +7,7 @@ import json
 import math
 from collections import Counter, deque
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 DEFAULT_METRICS = (
     "agent_diag/success_rate",
@@ -71,6 +71,162 @@ def _resolve_monitor_dir(run_dir: str | Path) -> Path:
     root = Path(run_dir).expanduser().resolve()
     monitor = root / "monitor"
     return monitor if monitor.is_dir() else root
+
+
+def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Map deterministic metric patterns to bounded investigation hypotheses."""
+
+    trends = report.get("trends", {})
+
+    def latest(metric: str) -> float | None:
+        value = trends.get(metric, {}).get("latest")
+        return float(value) if isinstance(value, (int, float)) else None
+
+    diagnoses = []
+
+    def add(code: str, severity: str, evidence: Mapping[str, Any], next_checks: Sequence[str]) -> None:
+        diagnoses.append(
+            {
+                "code": code,
+                "severity": severity,
+                "evidence": dict(evidence),
+                "next_checks": list(next_checks),
+            }
+        )
+
+    run_state = str(report.get("run_state", "unknown"))
+    if run_state in {"launched_no_heartbeat", "ray_configured_no_heartbeat", "unknown"}:
+        add(
+            "startup_incomplete",
+            "high",
+            {"run_state": run_state},
+            (
+                "inspect the persisted console log",
+                "verify model/runtime initialization before changing training hyperparameters",
+            ),
+        )
+    invalid_rate = latest("agent_diag/invalid_step_rate")
+    if invalid_rate is not None and invalid_rate >= 0.2:
+        add(
+            "high_invalid_action_rate",
+            "high",
+            {"agent_diag/invalid_step_rate": invalid_rate},
+            (
+                "inspect invalid-action rollout samples",
+                "check action tags, parser projection, and advertised legal actions",
+            ),
+        )
+    repeated_rate = latest("agent_diag/repeated_action_rate")
+    if repeated_rate is not None and repeated_rate >= 0.2:
+        add(
+            "policy_action_loop",
+            "medium",
+            {"agent_diag/repeated_action_rate": repeated_rate},
+            (
+                "inspect consecutive responses and observations",
+                "verify history contains the last action and changed state",
+            ),
+        )
+    max_steps_rate = latest("agent_diag/max_steps_rate")
+    if max_steps_rate is not None and max_steps_rate >= 0.5:
+        add(
+            "frequent_max_step_termination",
+            "medium",
+            {"agent_diag/max_steps_rate": max_steps_rate},
+            (
+                "separate invalid, repeated, and valid-but-unproductive trajectories",
+                "do not increase max_steps before inspecting rollouts",
+            ),
+        )
+    response_clip = latest("response_length/clip_ratio")
+    if response_clip is not None and response_clip >= 0.1:
+        add(
+            "response_clipping",
+            "high",
+            {"response_length/clip_ratio": response_clip},
+            (
+                "inspect whether </action> is truncated",
+                "adjust response budget only after checking verbosity and stop behavior",
+            ),
+        )
+    ppo_kl = latest("actor/ppo_kl")
+    if ppo_kl is not None and abs(ppo_kl) >= 0.1:
+        add(
+            "large_policy_update",
+            "high",
+            {"actor/ppo_kl": ppo_kl},
+            (
+                "check learning rate, PPO epochs, and KL coefficient",
+                "compare reward/success before retaining the update",
+            ),
+        )
+    clipfrac = latest("actor/pg_clipfrac")
+    if clipfrac is not None and clipfrac >= 0.3:
+        add(
+            "high_policy_clip_fraction",
+            "high",
+            {"actor/pg_clipfrac": clipfrac},
+            (
+                "inspect advantage scale and ratio distribution",
+                "consider a smaller update only after ruling out padding/mask errors",
+            ),
+        )
+    grad_norm = latest("actor/grad_norm")
+    if grad_norm is not None and grad_norm >= 100:
+        add(
+            "high_gradient_norm",
+            "high",
+            {"actor/grad_norm": grad_norm},
+            (
+                "check credit outliers and non-finite values",
+                "verify clipping is active before changing optimization",
+            ),
+        )
+    schema_fallback = latest("exact/schema_fallback_rate")
+    if schema_fallback is not None and schema_fallback > 0:
+        add(
+            "opaque_exact_schema",
+            "high",
+            {"exact/schema_fallback_rate": schema_fallback},
+            (
+                "inspect environment effect-schema records",
+                "treat graph attribution as all-to-all until the schema is repaired",
+            ),
+        )
+    residual_ratio = latest("exact/residual_ratio_mean")
+    if residual_ratio is not None and residual_ratio >= 0.95:
+        add(
+            "weak_exact_factor_explanation",
+            "medium",
+            {"exact/residual_ratio_mean": residual_ratio},
+            (
+                "inspect factor snapshots and terminal residual",
+                "improve verifier factors without adding model-visible reward hints",
+            ),
+        )
+    cone_density = latest("exact/cone_density_mean")
+    if cone_density is not None and cone_density >= 0.9:
+        add(
+            "dense_exact_credit_cone",
+            "medium",
+            {"exact/cone_density_mean": cone_density},
+            (
+                "inspect routed factor descendants",
+                "do not claim sparse causal localization from a nearly all-to-all graph",
+            ),
+        )
+    no_progress = latest("exact_diag/no_factor_progress_rate")
+    if no_progress is not None and no_progress >= 0.8:
+        add(
+            "little_verifier_progress",
+            "medium",
+            {"exact_diag/no_factor_progress_rate": no_progress},
+            (
+                "compare valid actions against factor changes",
+                "inspect whether factors are too coarse or the policy never reaches subgoals",
+            ),
+        )
+    return diagnoses
 
 
 def build_run_report(
@@ -140,7 +296,7 @@ def build_run_report(
         run_state = "launched_no_heartbeat"
     else:
         run_state = "unknown"
-    return {
+    report = {
         "run_root": str(run_root),
         "monitor_dir": str(monitor_dir),
         "run_state": run_state,
@@ -155,6 +311,8 @@ def build_run_report(
         "recent_alerts": alert_records,
         "rollout_samples": samples,
     }
+    report["diagnoses"] = diagnose_report(report)
+    return report
 
 
 def main() -> int:
