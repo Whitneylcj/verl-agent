@@ -63,6 +63,21 @@ def test_alfworld_pick_two_counts_distinct_object_instances():
     assert snapshot["values"][-3:-1] == (1.0, 1.0)
 
 
+def test_alfworld_probe_reports_current_state_regressions():
+    task = {
+        "task_type": "pick_and_place_simple",
+        "object_target": "Apple",
+        "parent_target": "CounterTop",
+    }
+    held = alfworld_factor_snapshot(
+        {"facts": [{"name": "holds", "arguments": ["agent", "apple 1"]}]},
+        task,
+    )
+    released = alfworld_factor_snapshot({"facts": []}, task)
+    assert held["values"][0] == 1.0
+    assert released["values"][0] == 0.0
+
+
 def test_webshop_missing_components_are_zero_not_unknown_schema():
     initial = webshop_factor_snapshot(None)
     terminal = webshop_factor_snapshot({"r_type": 1, "r_att": 0.5, "r_price": True})

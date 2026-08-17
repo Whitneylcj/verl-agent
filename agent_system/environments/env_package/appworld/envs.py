@@ -53,7 +53,7 @@ class AppWorldWorker:
         self.max_interactions = max_interactions
         self.worker_id = worker_id
         
-        self.url = f"http://0.0.0.0:{port}"
+        self.url = f"http://127.0.0.1:{port}"
         self._exact_factor_ids = None
         self._exact_snapshot = None
 

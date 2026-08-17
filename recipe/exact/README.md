@@ -61,6 +61,19 @@ Set `APPWORLD_PORT_FILE` to the persistent port manifest produced by the
 AppWorld service launcher. The client refuses to start when that manifest is
 missing or too short for the requested train/validation workers.
 
+After installing the pinned AppWorld checkout and its data, start only the
+ports owned by this recipe with:
+
+```bash
+bash examples/exact_trainer/start_appworld_services.sh
+# later, stop exactly those sessions
+bash examples/exact_trainer/stop_appworld_services.sh
+```
+
+The launcher defaults to eight loopback services on ports 8200-8207, checks
+each `/docs` endpoint before publishing the manifest, and never kills unrelated
+AppWorld or Python processes.
+
 ## Monitoring artifacts
 
 `outputs/.../monitor/` contains:

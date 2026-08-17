@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 
 def extract_tagged_payload(action: str, start_tag: str, end_tag: str) -> str:
@@ -13,16 +14,32 @@ def extract_tagged_payload(action: str, start_tag: str, end_tag: str) -> str:
         raise ValueError(f"missing {start_tag}...{end_tag} block")
     if action.find(start_tag, start_index + len(start_tag)) != -1:
         raise ValueError(f"multiple {start_tag} blocks are not allowed")
-    return action[start_index + len(start_tag):end_index].strip()
+    return action[start_index + len(start_tag) : end_index].strip()
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
 
 
 def compile_json_api_action(action: str) -> str:
     """Compile one tagged JSON object into a fixed-shape AppWorld API call."""
 
-    extract_tagged_payload(action, "<think>", "</think>")
-    payload = json.loads(extract_tagged_payload(action, "<action>", "</action>"))
-    if not isinstance(payload, dict) or set(payload) != {"app", "api", "arguments"}:
-        raise ValueError("JSON action must contain exactly app, api, and arguments")
+    match = re.fullmatch(
+        r"\s*<think>(.*?)</think>\s*<action>(.*?)</action>\s*",
+        action,
+        flags=re.DOTALL,
+    )
+    if match is None or not match.group(1).strip():
+        raise ValueError("action must contain exactly one non-empty think block and one action block")
+    payload = json.loads(match.group(2).strip(), object_pairs_hook=_unique_object)
+    expected_keys = ("app", "api", "arguments")
+    if not isinstance(payload, dict) or tuple(payload) != expected_keys:
+        raise ValueError("JSON action keys must be ordered exactly as app, api, arguments")
     app_name = payload["app"]
     api_name = payload["api"]
     arguments = payload["arguments"]

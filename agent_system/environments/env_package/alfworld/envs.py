@@ -73,10 +73,6 @@ class AlfworldWorker:
         if self._exact_snapshot is not None:
             if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
                 raise RuntimeError("ALFWorld factor schema changed within a trajectory")
-            snapshot["values"] = tuple(
-                max(previous, current)
-                for previous, current in zip(self._exact_snapshot["values"], snapshot["values"])
-            )
         self._exact_snapshot = snapshot
     
     def step(self, action):
