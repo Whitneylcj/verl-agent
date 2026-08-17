@@ -54,6 +54,10 @@ def test_json_api_history_keeps_model_action_not_compiled_python():
     assert envs.projected_actions == ["print(apis.api_docs.show_app_descriptions(**{}))"]
     assert manager.memory[0][0]["action"] == model_action
     assert f"Action 1:\n{model_action}" in observations["text"][0]
+    assert observations["text"][0].count("document result") == 1
+    assert "neither is an\naccess token" in observations["text"][0]
+    assert "Do not call `complete_task` yet" in observations["text"][0]
+    assert "a sentence in\n   `answer` is not a substitute" in observations["text"][0]
     assert bool(infos[0]["is_action_syntax_valid"])
     assert not bool(infos[0]["is_action_execution_valid"])
     assert not bool(infos[0]["is_action_valid"])

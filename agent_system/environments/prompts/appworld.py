@@ -48,19 +48,34 @@ Task: {task_description}
 Recent interaction history ({history_length} of {step_count} prior calls):
 {action_history}
 
-Current result:
-{current_observation}
-
 Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
+The most recent Result above is the current environment result. Follow this
+workflow exactly:
+
+1. After `show_app_descriptions`, call `show_api_descriptions` for the app
+   relevant to the task. Do not call `complete_task` yet.
+2. Before calling an unfamiliar task API, call `show_api_doc` with an exact API
+   name returned by `show_api_descriptions`.
+3. An email address or phone number identifies the supervisor; neither is an
+   access token. If a task API requires `access_token`, use documented
+   supervisor APIs to retrieve that app's password, then use the documented
+   app login API and copy its returned access token verbatim.
+4. An error means the call did not work. Do not repeat it or invent an answer;
+   inspect the relevant documentation and make a different corrective call.
+5. Call `supervisor.complete_task` only after successful task-app calls prove
+   that the requested read or state change is complete. It accepts only its
+   documented `answer` and/or `status` arguments--never `task`, `user`,
+   `action`, `api`, or nested `arguments`. For action tasks, a sentence in
+   `answer` is not a substitute for performing the requested state change.
+
 Use only API names learned from results. Never guess an API or use the literal
-placeholders `app_name` and `api_name`. To inspect documentation, use:
+placeholders `app_name` and `api_name`. The following Spotify calls illustrate
+JSON syntax only; use the app relevant to the actual task. To list APIs, use:
 {{"app":"api_docs","api":"show_api_descriptions","arguments":{{"app_name":"spotify"}}}}
 then, with a real returned API name:
 {{"app":"api_docs","api":"show_api_doc","arguments":{{"app_name":"supervisor","api_name":"show_account_passwords"}}}}
 Replace the argument values with relevant names shown in the latest result.
-If the last result is an error, inspect documentation instead of guessing.
-Never emit reasoning, tags, Markdown fences, or Python. Call the documented
-supervisor.complete_task API only when the task is finished.
+Never emit reasoning, tags, Markdown fences, or Python.
 """
 
 
