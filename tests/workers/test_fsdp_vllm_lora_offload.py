@@ -23,6 +23,9 @@ class _FakeDevice:
     def empty_cache(self):
         return None
 
+    def synchronize(self):
+        self.events.append("synchronize_offload")
+
 
 def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     events = []
@@ -48,6 +51,7 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     manager.update_params = lambda params, peft_config=None: events.append("update_lora")
 
     fake_device = _FakeDevice()
+    fake_device.events = events
     monkeypatch.setattr(performance, "get_torch_device", lambda: fake_device)
     monkeypatch.setattr(fsdp_vllm, "get_torch_device", lambda: fake_device)
     monkeypatch.setattr(fsdp_vllm, "PeftModel", _FakePeftModel)
@@ -74,6 +78,7 @@ def test_cpu_lora_state_offloads_actor_before_vllm_wake(monkeypatch):
     assert events == [
         "load_actor",
         "offload_actor",
+        "synchronize_offload",
         "wake_weights",
         "update_lora",
         "wake_kv_cache",

@@ -192,6 +192,11 @@ class FSDPVLLMShardingManager(BaseShardingManager):
         )
         if self.offload_param and lora_params_are_cpu:
             offload_fsdp_model_to_cpu(self.module)
+            # FSDP offload uses non-blocking device-to-host copies.  vLLM's
+            # CuMem allocator cannot remap its weight handles until those
+            # copies have actually released their GPU storage.  Synchronizing
+            # here also drains any preceding optimizer-state offload.
+            get_torch_device().synchronize()
             get_torch_device().empty_cache()
             actor_offloaded_before_wake = True
 
