@@ -49,32 +49,25 @@ Recent interaction history ({history_length} of {step_count} prior calls):
 {action_history}
 
 Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
-The most recent Result above is the current environment result. Follow this
-workflow exactly:
+The latest Result above is current. After the app list, inspect API descriptions
+for the task-relevant app. `show_api_doc` requires both an app and an exact API
+name from that list. After reading an API document, call that documented API
+next; do not inspect the same list or document twice.
 
-1. After `show_app_descriptions`, call `show_api_descriptions` for the app
-   relevant to the task. Do not call `complete_task` yet.
-2. Before calling an unfamiliar task API, call `show_api_doc` with an exact API
-   name returned by `show_api_descriptions`.
-3. An email address or phone number identifies the supervisor; neither is an
-   access token. If a task API requires `access_token`, use documented
-   supervisor APIs to retrieve that app's password, then use the documented
-   app login API and copy its returned access token verbatim.
-4. An error means the call did not work. Do not repeat it or invent an answer;
-   inspect the relevant documentation and make a different corrective call.
-5. Call `supervisor.complete_task` only after successful task-app calls prove
-   that the requested read or state change is complete. It accepts only its
-   documented `answer` and/or `status` arguments--never `task`, `user`,
-   `action`, `api`, or nested `arguments`. For action tasks, a sentence in
-   `answer` is not a substitute for performing the requested state change.
-
-Use only API names learned from results. Never guess an API or use the literal
-placeholders `app_name` and `api_name`. The following Spotify calls illustrate
-JSON syntax only; use the app relevant to the actual task. To list APIs, use:
-{{"app":"api_docs","api":"show_api_descriptions","arguments":{{"app_name":"spotify"}}}}
-then, with a real returned API name:
+Email and phone identify the supervisor; they are never access tokens. If an
+API requires `access_token`, inspect and call the supervisor's documented
+`show_account_passwords` API, inspect and call the task app's `login` API, and
+copy the returned access token. Documentation and execution are separate calls:
 {{"app":"api_docs","api":"show_api_doc","arguments":{{"app_name":"supervisor","api_name":"show_account_passwords"}}}}
-Replace the argument values with relevant names shown in the latest result.
+{{"app":"supervisor","api":"show_account_passwords","arguments":{{}}}}
+
+Use only exact API names and arguments learned from results. On an error, make a
+different corrective call instead of repeating or guessing. Call
+`supervisor.complete_task` only after successful task-app calls prove the task
+is complete. Its arguments may contain only documented `answer` and `status`
+keys--never `task`, `user`, `action`, `api`, or nested `arguments`. An answer
+sentence does not perform an action task.
+
 Never emit reasoning, tags, Markdown fences, or Python.
 """
 
