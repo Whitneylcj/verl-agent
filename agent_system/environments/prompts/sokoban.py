@@ -46,10 +46,9 @@ Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
 Read the grid literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
-Reply in exactly two lines. The first line must be at most 30 words and use this format:
-Plan: P=(row,column), X=(row,column), O=(row,column); intended push=<direction>; current move=<direction>.
-Do not list alternatives or reconsider the plan after writing it.
-The second line must contain exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
+Commit to one plan; do not enumerate alternatives, reconsider the plan, or restate the entire grid.
+Then output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """
 
 SOKOBAN_TEMPLATE = """
@@ -85,10 +84,9 @@ Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
 Read the grid literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
-Reply in exactly two lines. The first line must be at most 30 words and use this format:
-Plan: P=(row,column), X=(row,column), O=(row,column); intended push=<direction>; current move=<direction>.
-Do not list alternatives or reconsider the plan after writing it.
-The second line must contain exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
+Commit to one plan; do not enumerate alternatives, reconsider the plan, or restate the entire grid.
+Then output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """
 
 SOKOBAN_VISUAL_TEMPLATE = """
@@ -115,8 +113,7 @@ Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
 Read the image literally and do not invent boxes or targets. Number rows top-to-bottom and columns left-to-right.
-Reply in exactly two lines. The first line must be at most 30 words and use this format:
-Plan: P=(row,column), X=(row,column), O=(row,column); intended push=<direction>; current move=<direction>.
-Do not list alternatives or reconsider the plan after writing it.
-The second line must contain exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
+Before the action, write 1-3 short sentences identifying the player, box, and target coordinates, the intended useful box push, and how this move reaches the required side of the box.
+Commit to one plan; do not enumerate alternatives, reconsider the plan, or restate the entire grid.
+Then output exactly one lowercase admissible action within <action> and </action> tags. This is the only required executable portion.
 """
