@@ -38,6 +38,28 @@ def write_documents(products: Sequence[Mapping[str, Any]], destination: Path) ->
     return len(documents)
 
 
+def validate_source_files(data_root: Path) -> tuple[int, int]:
+    """Validate the 1k WebShop product/attribute pair before indexing."""
+
+    product_path = data_root / "items_shuffle_1000.json"
+    attribute_path = data_root / "items_ins_v2_1000.json"
+    with product_path.open(encoding="utf-8") as handle:
+        products = json.load(handle)
+    with attribute_path.open(encoding="utf-8") as handle:
+        attributes = json.load(handle)
+    if not isinstance(products, list) or len(products) != 1000:
+        raise ValueError("WebShop small product data must contain exactly 1000 products")
+    if not isinstance(attributes, Mapping) or len(attributes) != 1000:
+        raise ValueError("WebShop small attribute data must contain exactly 1000 entries")
+    asins = [str(product["asin"]) for product in products]
+    if len(set(asins)) != len(asins):
+        raise ValueError("WebShop small product data contains duplicate ASINs")
+    missing_attributes = set(asins) - set(attributes)
+    if missing_attributes:
+        raise ValueError(f"WebShop attributes are missing {len(missing_attributes)} product ASINs")
+    return len(products), len(attributes)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", required=True, type=Path)
@@ -50,6 +72,7 @@ def main() -> None:
     for name in ("items_shuffle_1000.json", "items_ins_v2_1000.json"):
         if not (data_root / name).is_file():
             raise FileNotFoundError(f"missing WebShop input: {data_root / name}")
+    validate_source_files(data_root)
 
     resource_dir = search_root / "resources_1k"
     index_dir = search_root / "indexes_1k"
