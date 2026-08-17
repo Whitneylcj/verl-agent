@@ -29,6 +29,18 @@ class _Tokenizer:
         return " ".join(str(int(value)) for value in token_ids)
 
 
+class _ActionTokenizer:
+    actions = {
+        1: "<think>first plan</think><action>right</action>",
+        2: "<think>second plan</think><action> Right </action>",
+        3: "<think>third plan</think><action>right</action>",
+    }
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        del skip_special_tokens
+        return self.actions[int(token_ids[0])]
+
+
 def _snapshot(values):
     return {"factor_ids": ("progress",), "values": values}
 
@@ -206,6 +218,40 @@ def test_baseline_diagnostics_do_not_invent_exact_factor_signals():
         trajectory_diagnostics=diagnostics,
     )
     assert {record["step_id"] for record in records} <= {1, 2}
+
+
+def test_diagnostics_detect_three_action_loop_despite_different_reasoning():
+    batch = _Batch(
+        {
+            "responses": torch.tensor([[1], [2], [3]]),
+            "response_mask": torch.ones(3, 1, dtype=torch.int64),
+        },
+        {
+            "traj_uid": np.array(["loop", "loop", "loop"], dtype=object),
+            "agent_step_id": np.array([1, 2, 3]),
+            "rollout_padding": np.zeros(3, dtype=bool),
+            "episode_rewards": np.zeros(3),
+            "episode_lengths": np.full(3, 3),
+            "is_action_valid": np.ones(3, dtype=bool),
+            "episode_done": np.array([False, False, True]),
+            "trajectory_outcomes": np.array(
+                [{"success_rate": 0.0}] * 3,
+                dtype=object,
+            ),
+        },
+    )
+
+    diagnostics = build_trajectory_diagnostics(
+        batch,
+        [],
+        max_steps=3,
+        tokenizer=_ActionTokenizer(),
+    )
+
+    assert diagnostics[0]["repeated_action_step_ids"] == [3]
+    assert diagnostics[0]["repeated_response_step_ids"] == []
+    assert "repeated_action" in diagnostics[0]["diagnostic_tags"]
+    assert diagnostics[0]["termination"] == "max_steps"
 
 
 def test_rollout_redaction_bounds_text_and_removes_common_secrets():

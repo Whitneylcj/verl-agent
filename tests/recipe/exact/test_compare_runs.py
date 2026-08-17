@@ -43,7 +43,11 @@ def _write_run(
             "packages": {"torch": "2.8.0"},
             "gpus": [{"name": "RTX 4090"}],
         },
-        "paths": {"VERL_AGENT_DATA_ROOT": "/data"},
+        "paths": {
+            "VERL_AGENT_DATA_ROOT": "/data",
+            "TENSORBOARD_DIR": str(run_dir / "tensorboard"),
+            "EXACT_CONSOLE_LOG": str(run_dir.with_suffix(".log")),
+        },
         "hydra_overrides": overrides,
     }
     (run_dir / "run_manifest.json").write_text(json.dumps(manifest))

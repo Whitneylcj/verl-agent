@@ -111,6 +111,24 @@ def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
     ]
 
 
+def test_inspect_run_allows_recent_startup_without_heartbeat(tmp_path):
+    monitor = tmp_path / "monitor"
+    monitor.mkdir()
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps({"created_unix": 90.0, "experiment": {"name": "pilot"}})
+    )
+
+    report = build_run_report(
+        tmp_path,
+        stale_after_seconds=30.0,
+        now_unix=100.0,
+    )
+
+    assert report["run_state"] == "launched_no_heartbeat"
+    assert report["run_age_seconds"] == 10.0
+    assert report["diagnoses"] == []
+
+
 def test_inspect_run_diagnoses_redacted_trainer_failure(tmp_path):
     (tmp_path / "heartbeat.json").write_text(
         json.dumps(

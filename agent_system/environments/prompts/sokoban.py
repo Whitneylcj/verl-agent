@@ -40,8 +40,7 @@ Your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-You should first reason step-by-step about the current situation — observe the positions of boxes and targets, plan a path to push a box toward a target, and avoid traps like corners or walls. This reasoning process MUST be enclosed within <think> </think> tags. 
-Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
+Read the grid literally and do not invent boxes or targets. Reply in exactly this form: <think>at most two short sentences</think><action>one of up/down/left/right</action>.
 """
 
 SOKOBAN_TEMPLATE = """
@@ -71,8 +70,7 @@ You are now at step {current_step} and your current observation is:
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-You should first reason step-by-step about the current situation — observe the positions of boxes and targets, plan a path to push a box toward a target, and avoid traps like corners or walls. This reasoning process MUST be enclosed within <think> </think> tags. 
-Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
+Read the grid literally and do not invent boxes or targets. Reply in exactly this form: <think>at most two short sentences</think><action>one of up/down/left/right</action>.
 """
 
 SOKOBAN_VISUAL_TEMPLATE = """
@@ -93,6 +91,5 @@ Your current observation is shown in the image: <image>
 Your admissible actions are ["up", "down", "left", "right"].
 
 Now it's your turn to make a move (choose ONE action only for the current step).
-You should first reason step-by-step about the current situation — observe the positions of boxes and targets, plan a path to push a box toward a target, and avoid traps like corners or walls. This reasoning process MUST be enclosed within <think> </think> tags. 
-Once you've finished your reasoning, you should choose an admissible action for current step and present it within <action> </action> tags.
+Read the image literally and do not invent boxes or targets. Reply in exactly this form: <think>at most two short sentences</think><action>one of up/down/left/right</action>.
 """

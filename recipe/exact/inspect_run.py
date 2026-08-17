@@ -106,7 +106,15 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
         )
 
     run_state = str(report.get("run_state", "unknown"))
-    if run_state in {"launched_no_heartbeat", "ray_configured_no_heartbeat", "unknown"}:
+    run_age = report.get("run_age_seconds")
+    stale_after = report.get("stale_after_seconds")
+    startup_is_stale = (
+        run_state == "unknown"
+        or not isinstance(run_age, (int, float))
+        or not isinstance(stale_after, (int, float))
+        or run_age >= stale_after
+    )
+    if run_state in {"launched_no_heartbeat", "ray_configured_no_heartbeat", "unknown"} and startup_is_stale:
         add(
             "startup_incomplete",
             "high",
@@ -398,11 +406,14 @@ def build_run_report(
     current_unix = time.time() if now_unix is None else float(now_unix)
     updated_unix = (heartbeat or {}).get("updated_unix")
     heartbeat_age_seconds = max(current_unix - float(updated_unix), 0.0) if isinstance(updated_unix, (int, float)) else None
+    created_unix = (manifest or {}).get("created_unix")
+    run_age_seconds = max(current_unix - float(created_unix), 0.0) if isinstance(created_unix, (int, float)) else None
     report = {
         "run_root": str(run_root),
         "monitor_dir": str(monitor_dir),
         "run_state": run_state,
         "heartbeat_age_seconds": heartbeat_age_seconds,
+        "run_age_seconds": run_age_seconds,
         "stale_after_seconds": float(stale_after_seconds),
         "manifest": manifest,
         "resolved_config_present": (run_root / "resolved_config.yaml").is_file(),

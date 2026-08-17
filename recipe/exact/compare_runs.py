@@ -46,6 +46,7 @@ _COMPARISON_METRICS = (
     "exact/appworld_factor_compile_fallback_rate",
     "exact/credit_std",
 )
+_RUN_SPECIFIC_PATH_KEYS = {"EXACT_CONSOLE_LOG", "TENSORBOARD_DIR"}
 
 
 def _load_manifest(run_dir: Path) -> dict[str, Any]:
@@ -69,6 +70,16 @@ def _override_map(values: Sequence[str]) -> dict[str, str]:
     return result
 
 
+def _stable_paths(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Exclude output locations that are expected to differ by run name."""
+
+    return {
+        key: value
+        for key, value in manifest.get("paths", {}).items()
+        if key not in _RUN_SPECIFIC_PATH_KEYS
+    }
+
+
 def audit_run_fairness(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """Identify config differences outside the declared estimator controls."""
 
@@ -86,7 +97,7 @@ def audit_run_fairness(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]
         "runtime.packages": tuple(manifest.get("runtime", {}).get("packages") for manifest in manifests),
         "runtime.gpus": tuple(manifest.get("runtime", {}).get("gpus") for manifest in manifests),
         "runtime.environment": tuple(manifest.get("runtime", {}).get("environment") for manifest in manifests),
-        "paths": tuple(manifest.get("paths") for manifest in manifests),
+        "paths": tuple(_stable_paths(manifest) for manifest in manifests),
     }
     for field, values in runtime_fields.items():
         if any(value != values[0] for value in values[1:]):

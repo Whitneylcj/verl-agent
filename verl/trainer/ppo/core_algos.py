@@ -146,6 +146,7 @@ def compute_grpo_outcome_advantage(
     id2score = defaultdict(list)
     id2mean = {}
     id2std = {}
+    id2constant = {}
     seen_pairs = set()
     with torch.no_grad():
         bsz = scores.shape[0]
@@ -159,13 +160,21 @@ def compute_grpo_outcome_advantage(
             if len(id2score[idx]) == 1:
                 id2mean[idx] = torch.tensor(0.0)
                 id2std[idx] = torch.tensor(1.0)
+                id2constant[idx] = False
             elif len(id2score[idx]) > 1:
-                id2mean[idx] = torch.mean(torch.tensor(id2score[idx]))
-                id2std[idx] = torch.std(torch.tensor([id2score[idx]]))
+                group_scores = torch.stack(id2score[idx])
+                id2constant[idx] = bool(torch.all(group_scores == group_scores[0]).item())
+                id2mean[idx] = group_scores[0] if id2constant[idx] else torch.mean(group_scores)
+                id2std[idx] = torch.std(group_scores)
             else:
                 raise ValueError(f"no score in prompt index: {idx}")
         for i in range(bsz):
-            if norm_adv_by_std_in_grpo:
+            # Equal group returns must produce exactly zero advantage. Computing
+            # a float32 mean first can leave a one-ULP residual which is then
+            # amplified by the epsilon denominator into a spurious gradient.
+            if id2constant[index[i]]:
+                scores[i] = torch.zeros_like(scores[i])
+            elif norm_adv_by_std_in_grpo:
                 scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
             else:
                 scores[i] = scores[i] - id2mean[index[i]]

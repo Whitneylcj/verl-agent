@@ -1465,6 +1465,7 @@ class RayPPOTrainer:
                                 exact_traces,
                                 max_steps=self.config.env.max_steps,
                                 residual_warning_ratio=monitor_config.residual_warning_ratio,
+                                tokenizer=self.tokenizer,
                             )
                             metrics.update(summarize_trajectory_diagnostics(trajectory_diagnostics))
 

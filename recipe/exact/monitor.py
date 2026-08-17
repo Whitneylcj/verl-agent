@@ -21,6 +21,7 @@ _SECRET_PATTERN = re.compile(
     r"(?i)\b(api[_-]?key|access[_-]?token|password|passwd|secret)\b"
     r"(\s*[:=]\s*)([^\s,;\"'}]+|\"[^\"]*\"|'[^']*')"
 )
+_ACTION_PATTERN = re.compile(r"<action>\s*(.*?)\s*</action>", re.IGNORECASE | re.DOTALL)
 
 
 class ExactSafetyStop(RuntimeError):
@@ -90,6 +91,48 @@ def _valid_response_signature(batch: Any, row: int) -> str:
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
+def _valid_response_text(tokenizer: Any, batch: Any, row: int) -> str:
+    response_mask = batch.batch.get("response_mask")
+    if response_mask is None:
+        response_length = batch.batch["responses"].shape[-1]
+        response_mask = batch.batch["attention_mask"][:, -response_length:]
+    token_ids = batch.batch["responses"][row][response_mask[row].bool()]
+    return tokenizer.decode(token_ids, skip_special_tokens=True)
+
+
+def _action_signature(text: str) -> str | None:
+    match = _ACTION_PATTERN.search(text)
+    if match is None:
+        return None
+    content = " ".join(match.group(1).split())
+    if not content:
+        return None
+    try:
+        decoded = json.loads(content)
+    except json.JSONDecodeError:
+        return content.lower()
+    return json.dumps(decoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _repeated_action_steps(
+    signatures: Sequence[str | None],
+    rows: Sequence[int],
+    step_ids: np.ndarray,
+    min_run_length: int = 3,
+) -> list[int]:
+    repeated = []
+    run_length = 1
+    for position in range(1, len(signatures)):
+        signature = signatures[position]
+        if signature is not None and signature == signatures[position - 1]:
+            run_length += 1
+            if run_length >= min_run_length:
+                repeated.append(int(step_ids[rows[position]]))
+        else:
+            run_length = 1
+    return repeated
+
+
 def _padding_mask(batch: Any) -> np.ndarray:
     raw_padding = batch.non_tensor_batch.get(
         "exact_padding",
@@ -113,6 +156,7 @@ def build_trajectory_diagnostics(
     traces: Sequence[Mapping[str, Any]],
     max_steps: int | None = None,
     residual_warning_ratio: float = 0.95,
+    tokenizer: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Build deterministic, no-model hypotheses for every non-padding trajectory."""
 
@@ -150,7 +194,22 @@ def build_trajectory_diagnostics(
                     factor_decrease_steps.append(step_id)
 
         response_signatures = [_valid_response_signature(batch, row) for row in rows]
-        repeated_action_steps = [int(step_ids[rows[position]]) for position in range(1, len(rows)) if response_signatures[position] == response_signatures[position - 1]]
+        repeated_response_steps = [
+            int(step_ids[rows[position]])
+            for position in range(1, len(rows))
+            if response_signatures[position] == response_signatures[position - 1]
+        ]
+        action_signatures = (
+            [_action_signature(_valid_response_text(tokenizer, batch, row)) for row in rows]
+            if tokenizer is not None
+            else []
+        )
+        action_loop_steps = (
+            _repeated_action_steps(action_signatures, rows, step_ids)
+            if action_signatures
+            else []
+        )
+        repeated_action_steps = sorted(set(repeated_response_steps) | set(action_loop_steps))
         raw_outcomes = batch.non_tensor_batch.get(
             "trajectory_outcomes",
             np.asarray([{} for _ in range(len(batch))], dtype=object),
@@ -159,10 +218,10 @@ def build_trajectory_diagnostics(
         primary_success = success_values.get("success_rate")
         if primary_success is not None and primary_success > 0:
             termination = "success"
-        elif done:
-            termination = "environment_terminal_failure"
         elif max_steps is not None and episode_length >= int(max_steps):
             termination = "max_steps"
+        elif done:
+            termination = "environment_terminal_failure"
         else:
             termination = "collector_incomplete"
 
@@ -196,6 +255,7 @@ def build_trajectory_diagnostics(
                 "factor_change_step_ids": factor_change_steps,
                 "factor_decrease_step_ids": factor_decrease_steps,
                 "repeated_action_step_ids": repeated_action_steps,
+                "repeated_response_step_ids": repeated_response_steps,
                 "schema_fallback_step_ids": fallback_steps,
                 "success": success_values,
                 "termination": termination,
