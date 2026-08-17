@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from recipe.exact.run_manifest import build_manifest, redact_override, write_manifest
@@ -61,3 +62,25 @@ def test_manifest_refuses_nonempty_unidentified_directory(tmp_path):
 def test_override_redaction_only_hides_sensitive_keys():
     assert redact_override("model.path=Qwen/Qwen2.5") == "model.path=Qwen/Qwen2.5"
     assert redact_override("api_token=abc") == "api_token=[REDACTED]"
+
+
+def test_manifest_hashes_the_verified_toy_audit(tmp_path, monkeypatch):
+    audit_path = tmp_path / "toy-audit.json"
+    payload = b'{"schema_version":"exact-toy-audit/v1","status":"pass","git":{"commit":"abc"}}\n'
+    audit_path.write_bytes(payload)
+    monkeypatch.setenv("EXACT_TOY_AUDIT_PATH", str(audit_path))
+
+    manifest = build_manifest(
+        repo_root=Path(__file__).resolve().parents[3],
+        experiment=_experiment(),
+        overrides=[],
+        include_hardware=False,
+    )
+
+    assert manifest["preflight"]["toy_audit"] == {
+        "path": str(audit_path.resolve()),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": "exact-toy-audit/v1",
+        "status": "pass",
+        "commit": "abc",
+    }

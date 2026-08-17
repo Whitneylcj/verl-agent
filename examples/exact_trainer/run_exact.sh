@@ -161,6 +161,13 @@ if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then
   exit 0
 fi
 
+if [[ "${PILOT_AUTHORIZED:-0}" != "1" ]]; then
+  echo "Set PILOT_AUTHORIZED=1 only after paid GPU rollout/training is approved" >&2
+  exit 2
+fi
+export EXACT_TOY_AUDIT_PATH=${EXACT_TOY_AUDIT_PATH:-/root/autodl-tmp/config/exact/toy-audit.json}
+python3 -m recipe.exact.toy_audit --verify "${EXACT_TOY_AUDIT_PATH}"
+
 if [[ ! -f "${train_file}" || ! -f "${validation_file}" ]]; then
   python3 -m examples.data_preprocess.prepare \
     --mode text \

@@ -63,6 +63,22 @@ def _gpu_inventory() -> list[dict[str, str]]:
     return [dict(zip(fields, (piece.strip() for piece in line.split(",")))) for line in output.splitlines()]
 
 
+def _toy_audit_evidence() -> dict[str, Any] | None:
+    raw_path = os.environ.get("EXACT_TOY_AUDIT_PATH")
+    if not raw_path:
+        return None
+    path = Path(raw_path).expanduser().resolve()
+    payload = path.read_bytes()
+    report = json.loads(payload)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "schema_version": report.get("schema_version"),
+        "status": report.get("status"),
+        "commit": report.get("git", {}).get("commit"),
+    }
+
+
 def build_manifest(
     *,
     repo_root: Path,
@@ -106,9 +122,11 @@ def build_manifest(
                 "WEBSHOP_DATA_ROOT",
                 "WEBSHOP_SEARCH_ROOT",
                 "EXACT_CONSOLE_LOG",
+                "EXACT_TOY_AUDIT_PATH",
             )
             if os.environ.get(key)
         },
+        "preflight": {"toy_audit": _toy_audit_evidence()},
         "hydra_overrides": redacted_overrides,
         "hydra_overrides_sha256": override_digest,
     }

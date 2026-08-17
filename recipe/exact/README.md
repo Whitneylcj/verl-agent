@@ -29,8 +29,17 @@ choices and are reported separately from the raw on-policy identity.
 Run local theory tests first:
 
 ```bash
+EXACT_TOY_AUDIT_PATH=/tmp/exact-toy-audit.json \
+  bash examples/exact_trainer/run_toy_audit.sh
 python -m pytest -q tests/recipe/exact
 ```
+
+The stage-0 audit exactly enumerates an overwritable, branched Toy SCM with
+environment noise and irrelevant actions. It checks pathwise conservation,
+sound and corrupted graph gradients, the realized-mask counterexample,
+potential corruption, Monte Carlo confidence intervals, and distractor
+variance/MSE/SNR scaling. A paid pilot refuses to start unless the saved report
+passed on the current tracked-clean Git commit.
 
 On the prepared GPU host, compose a launch without starting environments:
 
@@ -73,7 +82,7 @@ Sokoban batch with two prompts, two trajectories per prompt, and 15 steps:
 ```bash
 TRAIN_SIZE=2 VALIDATION_SIZE=2 GROUP_SIZE=2 \
 MAX_ENV_STEPS=60 MAX_GENERATED_TOKENS=15360 TOTAL_EPOCHS=1 \
-bash examples/exact_trainer/run_sokoban.sh
+PILOT_AUTHORIZED=1 bash examples/exact_trainer/run_sokoban.sh
 ```
 
 The same `MODEL_PATH`, seed, sizes, budgets, optimizer, and schedule must be
