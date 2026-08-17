@@ -18,7 +18,9 @@ EVALUATION_CODE = """
 def evaluate(test, public_data, private_data, main_user, models, ground_truth_answer):
     active_tasks = models.end.supervisor.Task.all()
     predicted_answer = active_tasks[0].answer
-    with test("answers match"):
+    with test('''
+        answers match
+        '''):
         test.answer(predicted_answer, ground_truth_answer)
     with test("only allowed models changed"):
         test.case(models.changed_model_names(), "==", {"venmo.PaymentRequest"})

@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import hashlib
 from dataclasses import dataclass
+from textwrap import dedent
 from typing import Any, Mapping, Sequence
 
 from recipe.exact.appworld_adapter import parse_json_api_action
@@ -188,7 +189,7 @@ class _EvaluatorAnalyzer:
         if not isinstance(call.func, ast.Name) or call.func.id != "test" or not call.args:
             return None
         value = call.args[0]
-        return value.value.strip() if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
+        return dedent(value.value).strip() if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
 
     def statements(
         self,

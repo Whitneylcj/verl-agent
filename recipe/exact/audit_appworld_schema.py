@@ -25,7 +25,7 @@ from recipe.exact.appworld_schema import (
 
 def _task_ids() -> list[str]:
     tasks_root = Path(path_store.data) / "tasks"
-    return sorted(path.name for path in tasks_root.iterdir() if (path / "ground_truth" / "evaluation.py").is_file())
+    return sorted(path.name for path in tasks_root.iterdir() if not path.name.startswith("_") and (path / "ground_truth" / "evaluation.py").is_file())
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -72,7 +72,7 @@ def _git_state() -> dict[str, Any]:
 
 def audit_appworld_schema(
     task_ids: Sequence[str] | None = None,
-    max_opaque_rate: float = 1.0,
+    max_opaque_rate: float = 0.01,
 ) -> dict[str, Any]:
     if not 0 <= max_opaque_rate <= 1:
         raise ValueError("max_opaque_rate must be between zero and one")
@@ -181,7 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--output", type=Path)
     mode.add_argument("--verify", type=Path)
     parser.add_argument("--max-tasks", type=int)
-    parser.add_argument("--max-opaque-rate", type=float, default=1.0)
+    parser.add_argument("--max-opaque-rate", type=float, default=0.01)
     args = parser.parse_args(argv)
     if args.verify is not None:
         result = verify_appworld_schema_audit(args.verify)

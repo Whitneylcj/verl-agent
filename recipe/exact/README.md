@@ -153,6 +153,11 @@ The launcher defaults to eight loopback services on ports 8200-8207, checks
 each `/docs` endpoint before publishing the manifest, and never kills unrelated
 AppWorld or Python processes.
 
+The schema audit covers every non-template task, requires exact agreement with
+the canonical `test_data.json` requirements, and permits at most 1% of factors
+to use the explicit all-model read fallback. Its report is commit- and
+AppWorld-version-bound; an AppWorld EXACT pilot refuses stale evidence.
+
 ## Monitoring artifacts
 
 Every non-preflight launcher first writes `run_manifest.json` at the experiment
