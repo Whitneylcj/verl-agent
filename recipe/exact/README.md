@@ -89,6 +89,20 @@ revision, validates every safetensors shard plus local config/tokenizer assets,
 writes a model manifest under `/root/autodl-tmp/config/models/`, and passes the
 resolved immutable snapshot path to both smoke tests. It does not train.
 
+If the provider's Hugging Face large-file route is too slow, use the supported
+ModelScope mirror while preserving the Hugging Face model identity:
+
+```bash
+MODEL_DOWNLOAD_AUTHORIZED=1 MODEL_SOURCE=modelscope \
+  bash examples/exact_trainer/prepare_model.sh
+```
+
+For the pinned default Qwen model, the preparation gate requires the official
+`model.safetensors` SHA-256 and records the hash, byte size, ModelScope source
+revision, requested Hugging Face revision, tokenizer class, and resolved local
+snapshot in the manifest. A mirror download without an expected weight hash is
+rejected for other models.
+
 Keep the first paid run to one conservatively reserved rollout batch. For a
 Sokoban batch with two prompts, two trajectories per prompt, and 15 steps:
 
