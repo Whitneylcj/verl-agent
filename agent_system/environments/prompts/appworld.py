@@ -24,6 +24,7 @@ def appworld_json_auth_guidance(
     prior_results=(),
     task_apps=(),
     supervisor_email=None,
+    supervisor_phone_number=None,
 ) -> str:
     """Return the next deterministic authentication bootstrap instruction."""
 
@@ -86,6 +87,16 @@ def appworld_json_auth_guidance(
             action_json = json.dumps(login_doc_action, separators=(",", ":"))
             return f"MANDATORY NEXT ACTION: inspect the exact login schema for the task app `{app_name}`. Copy this exact JSON object and do nothing else:\n{action_json}"
 
+        login_doc_index = max(index for index, action in enumerate(parsed_actions) if action == login_doc_action)
+        login_doc = parsed_results[login_doc_index]
+        username_kind = "email"
+        if isinstance(login_doc, dict):
+            for parameter in login_doc.get("parameters", []):
+                if isinstance(parameter, dict) and parameter.get("name") == "username":
+                    description = str(parameter.get("description", "")).lower()
+                    if "phone" in description:
+                        username_kind = "phone_number"
+
         access_token = None
         login_index = None
         for index, (action, result) in enumerate(zip(parsed_actions, parsed_results, strict=False)):
@@ -100,10 +111,15 @@ def appworld_json_auth_guidance(
                 return f'MANDATORY NEXT ACTION: refresh the supervisor credentials before using `{app_name}`. Copy exactly:\n{{"app":"supervisor","api":"show_account_passwords","arguments":{{}}}}'
             if not isinstance(supervisor_email, str) or not supervisor_email:
                 raise ValueError("AppWorld JSON authentication requires the supervisor email")
+            username = supervisor_email
+            if username_kind == "phone_number":
+                if not isinstance(supervisor_phone_number, str) or not supervisor_phone_number:
+                    raise ValueError("AppWorld phone authentication requires the supervisor phone number")
+                username = supervisor_phone_number
             login_action = {
                 "app": app_name,
                 "api": "login",
-                "arguments": {"username": supervisor_email, "password": password},
+                "arguments": {"username": username, "password": password},
             }
             action_json = json.dumps(login_action, separators=(",", ":"))
             return f"MANDATORY NEXT ACTION: log in to `{app_name}` with the matching supervisor credential. Copy this exact JSON object and do nothing else:\n{action_json}"

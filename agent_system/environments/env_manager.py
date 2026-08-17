@@ -664,6 +664,7 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                                 prior_results=[record["text_obs"] for record in self.memory[i]],
                                 task_apps=self.allowed_apps[i],
                                 supervisor_email=self.supervisors[i]["email"],
+                                supervisor_phone_number=self.supervisors[i]["phone_number"],
                             )
                             if action_mode == "json_api"
                             else ""

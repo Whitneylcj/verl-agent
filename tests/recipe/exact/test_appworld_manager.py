@@ -120,3 +120,28 @@ def test_json_api_auth_guidance_persists_task_app_access_token():
         supervisor_email="user@example.com",
     )
     assert "spotify access_token=token-123" in guidance
+
+
+def test_json_api_auth_guidance_uses_phone_number_when_login_schema_requires_it():
+    actions = [
+        '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}',
+        '{"app":"supervisor","api":"show_account_passwords","arguments":{}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"phone","api_name":"login"}}',
+    ]
+    results = [
+        "[]",
+        "{}",
+        '[{"account_name":"phone","password":"phone-secret"}]',
+        '{"parameters":[{"name":"username","description":"Your account phone_number."}]}',
+    ]
+
+    guidance = appworld_json_auth_guidance(
+        actions,
+        prior_results=results,
+        task_apps=["phone"],
+        supervisor_email="user@example.com",
+        supervisor_phone_number="5550100",
+    )
+
+    assert '"username":"5550100","password":"phone-secret"' in guidance
