@@ -163,6 +163,7 @@ def build_manifest(
                 "APPWORLD_ROOT",
                 "WEBSHOP_DATA_ROOT",
                 "WEBSHOP_SEARCH_ROOT",
+                "TENSORBOARD_DIR",
                 "EXACT_CONSOLE_LOG",
                 "EXACT_TOY_AUDIT_PATH",
                 "APPWORLD_SCHEMA_AUDIT_PATH",

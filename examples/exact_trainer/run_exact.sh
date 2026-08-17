@@ -149,6 +149,7 @@ export APPWORLD_ROOT=${APPWORLD_ROOT:-${shared_data_root}/appworld}
 export APPWORLD_PORT_FILE=${APPWORLD_PORT_FILE:-/root/autodl-tmp/config/appworld_ports.ports}
 export WEBSHOP_DATA_ROOT=${WEBSHOP_DATA_ROOT:-${shared_data_root}/webshop/data}
 export WEBSHOP_SEARCH_ROOT=${WEBSHOP_SEARCH_ROOT:-${shared_data_root}/webshop/search_engine}
+export TENSORBOARD_DIR=${TENSORBOARD_DIR:-${run_output_dir}/tensorboard}
 
 model_overrides=()
 case "${model_path}" in

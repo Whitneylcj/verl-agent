@@ -355,20 +355,21 @@ class AgentRunObserver:
         step: int,
         metrics: Mapping[str, Any],
         warnings: Sequence[str],
+        failure: Mapping[str, Any] | None = None,
     ) -> None:
-        self._atomic_json(
-            self.output_dir / "heartbeat.json",
-            {
-                "status": status,
-                "step": int(step),
-                "updated_unix": time.time(),
-                "cumulative_env_steps": self.cumulative_env_steps,
-                "cumulative_generated_tokens": self.cumulative_generated_tokens,
-                "cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
-                "warnings": list(warnings),
-                "metrics": dict(metrics),
-            },
-        )
+        payload = {
+            "status": status,
+            "step": int(step),
+            "updated_unix": time.time(),
+            "cumulative_env_steps": self.cumulative_env_steps,
+            "cumulative_generated_tokens": self.cumulative_generated_tokens,
+            "cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
+            "warnings": list(warnings),
+            "metrics": dict(metrics),
+        }
+        if failure is not None:
+            payload["failure"] = dict(failure)
+        self._atomic_json(self.output_dir / "heartbeat.json", payload)
 
     def observe_credit(
         self,
@@ -493,6 +494,21 @@ class AgentRunObserver:
             step=step,
             metrics=metrics,
             warnings=[],
+        )
+
+    def mark_failed(self, step: int, error: BaseException) -> None:
+        """Persist a bounded, redacted trainer failure without hiding the exception."""
+
+        failure = {
+            "type": type(error).__name__,
+            "message": redact_rollout_text(str(error), max_chars=2_000),
+        }
+        self._write_heartbeat(
+            status="failed",
+            step=step,
+            metrics={},
+            warnings=["trainer_exception"],
+            failure=failure,
         )
 
 

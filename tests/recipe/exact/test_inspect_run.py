@@ -109,3 +109,43 @@ def test_inspect_run_reports_manifest_before_heartbeat(tmp_path):
             ],
         }
     ]
+
+
+def test_inspect_run_diagnoses_redacted_trainer_failure(tmp_path):
+    (tmp_path / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "step": 3,
+                "warnings": ["trainer_exception"],
+                "failure": {"type": "RuntimeError", "message": "worker exited"},
+                "updated_unix": 90.0,
+            }
+        )
+    )
+
+    report = build_run_report(tmp_path, now_unix=100.0)
+    assert report["heartbeat_age_seconds"] == 10.0
+    assert report["diagnoses"][0]["code"] == "trainer_failed"
+    assert report["diagnoses"][0]["evidence"]["failure_type"] == "RuntimeError"
+
+
+def test_inspect_run_diagnoses_stale_nonterminal_heartbeat(tmp_path):
+    (tmp_path / "heartbeat.json").write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "step": 2,
+                "warnings": [],
+                "updated_unix": 100.0,
+            }
+        )
+    )
+
+    report = build_run_report(
+        tmp_path,
+        stale_after_seconds=30.0,
+        now_unix=145.0,
+    )
+    assert report["heartbeat_age_seconds"] == 45.0
+    assert report["diagnoses"][0]["code"] == "heartbeat_stale"

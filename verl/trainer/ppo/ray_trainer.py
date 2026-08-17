@@ -1116,6 +1116,26 @@ class RayPPOTrainer:
         )
 
     def fit(self):
+        """Run training and persist ordinary trainer exceptions before re-raising."""
+
+        try:
+            return self._fit_impl()
+        except Exception as error:
+            run_observer = getattr(self, "_exact_run_observer", None)
+            if run_observer is not None:
+                from recipe.exact.monitor import ExactSafetyStop
+
+                if not isinstance(error, ExactSafetyStop):
+                    try:
+                        run_observer.mark_failed(
+                            step=int(getattr(self, "global_steps", 0)),
+                            error=error,
+                        )
+                    except Exception as monitor_error:
+                        pprint(f"Failed to persist trainer exception: {monitor_error}")
+            raise
+
+    def _fit_impl(self):
         """
         The training loop of PPO.
         The driver process only need to call the compute functions of the worker group through RPC
@@ -1142,6 +1162,7 @@ class RayPPOTrainer:
         self._load_checkpoint()
 
         run_observer = None
+        self._exact_run_observer = None
         monitor_config = self.config.algorithm.exact.monitor
         if monitor_config.enabled:
             from recipe.exact.monitor import AgentRunObserver
@@ -1160,6 +1181,7 @@ class RayPPOTrainer:
                 initial_active_gpu_hours=self.cumulative_active_gpu_hours,
                 initial_step=self.global_steps,
             )
+            self._exact_run_observer = run_observer
 
         # perform validation before training
         # currently, we only support validation using the reward_function.

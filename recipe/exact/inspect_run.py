@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -113,6 +114,46 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             (
                 "inspect the persisted console log",
                 "verify model/runtime initialization before changing training hyperparameters",
+            ),
+        )
+    if run_state == "failed":
+        failure = (report.get("heartbeat") or {}).get("failure", {})
+        add(
+            "trainer_failed",
+            "high",
+            {
+                "failure_type": failure.get("type"),
+                "failure_message": failure.get("message"),
+            },
+            (
+                "inspect the persisted console log around the final traceback",
+                "fix the runtime or data cause before changing optimization settings",
+            ),
+        )
+    if run_state == "safety_stopped":
+        add(
+            "exact_safety_stop",
+            "high",
+            {"warnings": (report.get("heartbeat") or {}).get("warnings", [])},
+            (
+                "inspect the failed EXACT invariant and credit trace",
+                "do not resume from the rejected optimizer step until the invariant is restored",
+            ),
+        )
+    heartbeat_age = report.get("heartbeat_age_seconds")
+    stale_after = report.get("stale_after_seconds")
+    if run_state in {"initializing", "validated", "credit_checked", "rollout_checked", "running"} and isinstance(heartbeat_age, (int, float)) and isinstance(stale_after, (int, float)) and heartbeat_age >= stale_after:
+        add(
+            "heartbeat_stale",
+            "high",
+            {
+                "run_state": run_state,
+                "heartbeat_age_seconds": heartbeat_age,
+                "stale_after_seconds": stale_after,
+            },
+            (
+                "inspect the managed screen session and persisted console log",
+                "check GPU utilization and Ray workers before interrupting the run",
             ),
         )
     invalid_rate = latest("agent_diag/invalid_step_rate")
@@ -287,11 +328,15 @@ def build_run_report(
     run_dir: str | Path,
     window: int = 20,
     rollout_count: int = 0,
+    stale_after_seconds: float = 1_800.0,
+    now_unix: float | None = None,
 ) -> dict[str, Any]:
     """Return a compact machine-readable report for polling and diagnosis."""
 
     if window <= 0:
         raise ValueError("window must be positive")
+    if stale_after_seconds <= 0:
+        raise ValueError("stale_after_seconds must be positive")
     monitor_dir = _resolve_monitor_dir(run_dir)
     run_root = monitor_dir.parent if monitor_dir.name == "monitor" else monitor_dir
     manifest = _read_json(run_root / "run_manifest.json")
@@ -350,10 +395,15 @@ def build_run_report(
         run_state = "launched_no_heartbeat"
     else:
         run_state = "unknown"
+    current_unix = time.time() if now_unix is None else float(now_unix)
+    updated_unix = (heartbeat or {}).get("updated_unix")
+    heartbeat_age_seconds = max(current_unix - float(updated_unix), 0.0) if isinstance(updated_unix, (int, float)) else None
     report = {
         "run_root": str(run_root),
         "monitor_dir": str(monitor_dir),
         "run_state": run_state,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "stale_after_seconds": float(stale_after_seconds),
         "manifest": manifest,
         "resolved_config_present": (run_root / "resolved_config.yaml").is_file(),
         "heartbeat": heartbeat,
@@ -374,10 +424,21 @@ def main() -> int:
     parser.add_argument("run_dir", help="Experiment directory or its monitor/ subdirectory")
     parser.add_argument("--window", type=int, default=20, help="Number of optimizer steps to summarize")
     parser.add_argument("--show-rollouts", type=int, default=0, help="Include this many recent redacted rollout samples")
+    parser.add_argument(
+        "--stale-after-seconds",
+        type=float,
+        default=1_800.0,
+        help="Diagnose a nonterminal heartbeat as stale after this many seconds",
+    )
     parser.add_argument("--fail-on-alert", action="store_true", help="Exit 2 when the latest heartbeat contains warnings")
     args = parser.parse_args()
 
-    report = build_run_report(args.run_dir, window=args.window, rollout_count=args.show_rollouts)
+    report = build_run_report(
+        args.run_dir,
+        window=args.window,
+        rollout_count=args.show_rollouts,
+        stale_after_seconds=args.stale_after_seconds,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
     warnings = (report.get("heartbeat") or {}).get("warnings", ())
     return 2 if args.fail_on_alert and warnings else 0

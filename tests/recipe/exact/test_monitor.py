@@ -284,3 +284,16 @@ def test_observer_persists_step_zero_validation(tmp_path):
     assert record["metrics"]["val/success_rate"] == 0.25
     heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
     assert heartbeat["status"] == "validated"
+
+
+def test_observer_persists_redacted_trainer_failure(tmp_path):
+    observer = ExactObserver(tmp_path)
+    observer.mark_failed(3, RuntimeError("password=abc123 failed for jane@example.com"))
+
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["status"] == "failed"
+    assert heartbeat["step"] == 3
+    assert heartbeat["warnings"] == ["trainer_exception"]
+    assert heartbeat["failure"]["type"] == "RuntimeError"
+    assert "abc123" not in heartbeat["failure"]["message"]
+    assert "jane@example.com" not in heartbeat["failure"]["message"]

@@ -64,6 +64,20 @@ def test_override_redaction_only_hides_sensitive_keys():
     assert redact_override("api_token=abc") == "api_token=[REDACTED]"
 
 
+def test_manifest_records_tensorboard_directory(tmp_path, monkeypatch):
+    tensorboard_dir = tmp_path / "run" / "tensorboard"
+    monkeypatch.setenv("TENSORBOARD_DIR", str(tensorboard_dir))
+
+    manifest = build_manifest(
+        repo_root=Path(__file__).resolve().parents[3],
+        experiment=_experiment(),
+        overrides=[],
+        include_hardware=False,
+    )
+
+    assert manifest["paths"]["TENSORBOARD_DIR"] == str(tensorboard_dir)
+
+
 def test_manifest_hashes_the_verified_toy_audit(tmp_path, monkeypatch):
     audit_path = tmp_path / "toy-audit.json"
     payload = b'{"schema_version":"exact-toy-audit/v1","status":"pass","git":{"commit":"abc"}}\n'
