@@ -247,9 +247,115 @@ def test_json_api_auth_guidance_inspects_top_task_api_schemas():
         task_description=task,
         supervisor_email="user@example.com",
     )
+    assert '"app_name":"supervisor","api_name":"complete_task"' in guidance
+
+    complete_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"complete_task"}}'
+    guidance = appworld_json_auth_guidance(
+        [*actions, song_doc, song_call, album_doc, album_call, complete_doc],
+        prior_results=[*results, library_doc, "[]", library_doc, "[]", "{}"],
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
     assert "Authentication bootstrap is complete" in guidance
     assert "Never invent a derived API name" in guidance
     assert "spotify: show_song_library, show_album_library" in guidance
+    assert "call supervisor.complete_task now" in guidance
+
+
+def test_json_api_auth_guidance_anchors_relative_dates_with_public_phone_clock():
+    actions = [
+        '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}',
+        '{"app":"supervisor","api":"show_account_passwords","arguments":{}}',
+    ]
+    results = ["[]", "{}", '[{"account_name":"spotify","password":"secret"}]']
+    task = "Count Spotify songs released before this year."
+
+    guidance = appworld_json_auth_guidance(
+        actions,
+        prior_results=results,
+        task_apps=["spotify", "phone"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    clock_action = '{"app":"phone","api":"get_current_date_and_time","arguments":{}}'
+    assert clock_action in guidance
+
+    guidance = appworld_json_auth_guidance(
+        [*actions, clock_action],
+        prior_results=[*results, '{"date":"2026-08-18","time":"09:00:00"}'],
+        task_apps=["spotify", "phone"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    assert '"app_name":"spotify","api_name":"login"' in guidance
+
+
+def test_json_api_auth_guidance_fetches_missing_library_detail_dates():
+    api_descriptions = json.dumps(
+        [
+            {"name": "show_song_library", "description": "Show songs in your song library."},
+            {"name": "show_album_library", "description": "Show albums in your album library."},
+            {"name": "show_song", "description": "Get details of a specific song."},
+        ]
+    )
+    library_doc = json.dumps({"parameters": [{"name": "access_token", "required": True}]})
+    detail_doc = json.dumps({"parameters": [{"name": "song_id", "required": True}]})
+    actions = [
+        '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}',
+        '{"app":"supervisor","api":"show_account_passwords","arguments":{}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"login"}}',
+        '{"app":"spotify","api":"login","arguments":{"username":"user@example.com","password":"secret"}}',
+        '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"spotify"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"show_song_library"}}',
+        '{"app":"spotify","api":"show_song_library","arguments":{"access_token":"token-123"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"show_album_library"}}',
+        '{"app":"spotify","api":"show_album_library","arguments":{"access_token":"token-123"}}',
+    ]
+    results = [
+        "[]",
+        "{}",
+        '[{"account_name":"spotify","password":"secret"}]',
+        "{}",
+        '{"access_token":"token-123"}',
+        api_descriptions,
+        library_doc,
+        '[{"song_id":11,"album_id":1},{"song_id":12,"album_id":2}]',
+        library_doc,
+        '[{"album_id":2,"release_date":"2020-01-01","song_ids":[12,13]}]',
+    ]
+    task = "Count distinct songs across my song and album libraries released before this year."
+
+    guidance = appworld_json_auth_guidance(
+        actions,
+        prior_results=results,
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    detail_doc_action = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"show_song"}}'
+    assert detail_doc_action in guidance
+
+    guidance = appworld_json_auth_guidance(
+        [*actions, detail_doc_action],
+        prior_results=[*results, detail_doc],
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    first_detail_action = '{"app":"spotify","api":"show_song","arguments":{"song_id":11}}'
+    assert first_detail_action in guidance
+
+    guidance = appworld_json_auth_guidance(
+        [*actions, detail_doc_action, first_detail_action],
+        prior_results=[*results, detail_doc, '{"song_id":11,"release_date":"2019-01-01"}'],
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    assert '{"app":"spotify","api":"show_song","arguments":{"song_id":12}}' in guidance
 
 
 def test_json_api_auth_guidance_uses_phone_number_when_login_schema_requires_it():

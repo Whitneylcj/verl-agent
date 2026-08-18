@@ -45,6 +45,7 @@ _APPWORLD_MUTATION_TERMS = {
     "verify",
 }
 _APPWORLD_READ_PREFIXES = ("get_", "list_", "search_", "show_")
+_APPWORLD_TEMPORAL_TERMS = {"after", "before", "current", "date", "released", "time", "today", "year"}
 
 
 def _appworld_task_terms(text):
@@ -153,6 +154,20 @@ def appworld_json_auth_guidance(
         if action == required_calls[-1][0] and isinstance(result, list):
             credentials.update({item["account_name"]: item["password"] for item in result if isinstance(item, dict) and "account_name" in item and "password" in item})
 
+    task_terms = _appworld_task_terms(task_description)
+    temporal_result = None
+    if task_terms & _APPWORLD_TEMPORAL_TERMS and "phone" in task_apps:
+        temporal_action = {"app": "phone", "api": "get_current_date_and_time", "arguments": {}}
+        if temporal_action not in parsed_actions:
+            action_json = json.dumps(temporal_action, separators=(",", ":"))
+            return (
+                "MANDATORY NEXT ACTION: anchor the task's relative date against AppWorld's audited public clock API. "
+                f"Copy this exact JSON object and do nothing else:\n{action_json}"
+            )
+        temporal_index = max(index for index, action in enumerate(parsed_actions) if action == temporal_action)
+        if isinstance(parsed_results[temporal_index], dict):
+            temporal_result = parsed_results[temporal_index]
+
     protected_apps = [str(app_name) for app_name in task_apps if app_name not in {"api_docs", "supervisor"}]
     normalized_task = " ".join(str(task_description).lower().replace("_", " ").split())
     explicit_apps = [
@@ -167,6 +182,16 @@ def appworld_json_auth_guidance(
         protected_apps = explicit_apps
     authenticated_tokens = {}
     task_api_allowlists = {}
+    task_evidence = []
+    completion_ready = False
+    if isinstance(temporal_result, dict):
+        task_evidence.append(
+            {
+                "source": "phone.get_current_date_and_time",
+                "date": temporal_result.get("date"),
+                "time": temporal_result.get("time"),
+            }
+        )
     for app_name in protected_apps:
         login_doc_action = {
             "app": "api_docs",
@@ -285,16 +310,158 @@ def appworld_json_auth_guidance(
                     f"{action_json}"
                 )
 
+        read_results = {}
+        for api_name in relevant_api_names[:2]:
+            for index in range(len(parsed_actions) - 1, api_list_index, -1):
+                action = parsed_actions[index]
+                result = parsed_results[index]
+                if (
+                    isinstance(action, dict)
+                    and action.get("app") == app_name
+                    and action.get("api") == api_name
+                    and isinstance(result, list)
+                ):
+                    read_results[api_name] = result
+                    break
+
+        detail_plan_complete = True
+        api_descriptions = parsed_results[api_list_index]
+        documented_names = (
+            {
+                entry.get("name")
+                for entry in api_descriptions
+                if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+            }
+            if isinstance(api_descriptions, list)
+            else set()
+        )
+        for library_api, items in read_results.items():
+            compact_items = [
+                {
+                    key: item[key]
+                    for key in ("song_id", "album_id", "release_date", "song_ids")
+                    if key in item
+                }
+                for item in items
+                if isinstance(item, dict)
+            ]
+            task_evidence.append({"source": f"{app_name}.{library_api}", "items": compact_items})
+
+            match = re.fullmatch(r"show_([a-z0-9_]+)_library", library_api)
+            if not match or not (task_terms & _APPWORLD_TEMPORAL_TERMS):
+                continue
+            entity = match.group(1)
+            identifier = f"{entity}_id"
+            detail_api = f"show_{entity}"
+            missing_detail_ids = []
+            for item in items:
+                if not isinstance(item, dict) or "release_date" in item:
+                    continue
+                value = item.get(identifier)
+                if isinstance(value, (int, str)) and value not in missing_detail_ids:
+                    missing_detail_ids.append(value)
+            if not missing_detail_ids or detail_api not in documented_names:
+                continue
+
+            detail_doc_action = {
+                "app": "api_docs",
+                "api": "show_api_doc",
+                "arguments": {"app_name": app_name, "api_name": detail_api},
+            }
+            if detail_doc_action not in parsed_actions[api_list_index + 1 :]:
+                detail_plan_complete = False
+                action_json = json.dumps(detail_doc_action, separators=(",", ":"))
+                return (
+                    f"MANDATORY NEXT ACTION: `{app_name}.{library_api}` omitted release dates, so inspect the "
+                    f"documented `{app_name}.{detail_api}` schema. Copy this exact JSON object and do nothing else:\n"
+                    f"{action_json}"
+                )
+
+            detail_doc_index = max(
+                index
+                for index, action in enumerate(parsed_actions)
+                if index > api_list_index and action == detail_doc_action
+            )
+            detail_doc = parsed_results[detail_doc_index]
+            detail_parameters = detail_doc.get("parameters") if isinstance(detail_doc, dict) else None
+            required_detail_names = {
+                parameter.get("name")
+                for parameter in detail_parameters or []
+                if isinstance(parameter, dict) and parameter.get("required") is True
+            }
+            if required_detail_names != {identifier}:
+                detail_plan_complete = False
+                continue
+
+            detail_items = []
+            for identifier_value in missing_detail_ids:
+                detail_result = None
+                for index in range(len(parsed_actions) - 1, detail_doc_index, -1):
+                    action = parsed_actions[index]
+                    if (
+                        isinstance(action, dict)
+                        and action.get("app") == app_name
+                        and action.get("api") == detail_api
+                        and action.get("arguments") == {identifier: identifier_value}
+                        and isinstance(parsed_results[index], dict)
+                    ):
+                        detail_result = parsed_results[index]
+                        break
+                if detail_result is None:
+                    detail_plan_complete = False
+                    detail_action = {
+                        "app": app_name,
+                        "api": detail_api,
+                        "arguments": {identifier: identifier_value},
+                    }
+                    action_json = json.dumps(detail_action, separators=(",", ":"))
+                    return (
+                        f"MANDATORY NEXT ACTION: fetch the missing release date for one documented `{entity}` "
+                        f"library item. Copy this exact JSON object and do nothing else:\n{action_json}"
+                    )
+                detail_items.append(
+                    {
+                        key: detail_result[key]
+                        for key in (identifier, "release_date")
+                        if key in detail_result
+                    }
+                )
+            task_evidence.append({"source": f"{app_name}.{detail_api}", "items": detail_items})
+
+        reads_complete = bool(relevant_api_names[:2]) and len(read_results) == len(relevant_api_names[:2])
+        if reads_complete and detail_plan_complete and task_terms & _APPWORLD_TEMPORAL_TERMS:
+            complete_doc_action = {
+                "app": "api_docs",
+                "api": "show_api_doc",
+                "arguments": {"app_name": "supervisor", "api_name": "complete_task"},
+            }
+            if complete_doc_action not in parsed_actions:
+                action_json = json.dumps(complete_doc_action, separators=(",", ":"))
+                return (
+                    "MANDATORY NEXT ACTION: all required read evidence is collected; inspect the exact completion "
+                    f"schema before answering. Copy this exact JSON object and do nothing else:\n{action_json}"
+                )
+            completion_ready = True
+
     token_context = ", ".join(f"{app_name} access_token={token}" for app_name, token in authenticated_tokens.items())
     api_context = "; ".join(
         f"{app_name}: {', '.join(api_names)}"
         for app_name, api_names in task_api_allowlists.items()
         if api_names
     )
+    evidence_context = json.dumps(task_evidence, separators=(",", ":"), sort_keys=True)
+    completion_context = (
+        "All planned reads are complete. Compute the requested deduplicated answer from Persistent task evidence, "
+        "then call supervisor.complete_task now; do not issue another read call. "
+        if completion_ready
+        else ""
+    )
     return (
         "Authentication bootstrap is complete. Inspect the exact API doc for the task operation before calling it. "
         f"Persistent authentication context: {token_context or 'no protected task app was identified'}. "
         f"Documented task-relevant API names: {api_context or 'none ranked; re-list the app APIs'}. "
+        f"Persistent task evidence: {evidence_context}. "
+        f"{completion_context}"
         "Copy the matching access_token into every protected call. If a call returns 401, repair authentication "
         "instead of repeating it. Never invent a derived API name. If a result lacks a required field, inspect the "
         "exact doc for a real detail or search API from the listed names. Never repeat a read call unless pagination, "
