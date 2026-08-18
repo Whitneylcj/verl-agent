@@ -191,6 +191,14 @@ def test_json_api_auth_guidance_inspects_top_task_api_schemas():
         ),
     ]
     task = "How many songs across my Spotify song and album libraries were released before this year?"
+    library_doc = json.dumps(
+        {
+            "parameters": [
+                {"name": "access_token", "required": True},
+                {"name": "page_index", "required": False},
+            ]
+        }
+    )
 
     guidance = appworld_json_auth_guidance(
         actions,
@@ -204,7 +212,17 @@ def test_json_api_auth_guidance_inspects_top_task_api_schemas():
     song_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"show_song_library"}}'
     guidance = appworld_json_auth_guidance(
         [*actions, song_doc],
-        prior_results=[*results, "{}"],
+        prior_results=[*results, library_doc],
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    assert '"app":"spotify","api":"show_song_library","arguments":{"access_token":"token-123"}' in guidance
+
+    song_call = '{"app":"spotify","api":"show_song_library","arguments":{"access_token":"token-123"}}'
+    guidance = appworld_json_auth_guidance(
+        [*actions, song_doc, song_call],
+        prior_results=[*results, library_doc, "[]"],
         task_apps=["spotify"],
         task_description=task,
         supervisor_email="user@example.com",
@@ -213,8 +231,18 @@ def test_json_api_auth_guidance_inspects_top_task_api_schemas():
 
     album_doc = '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"spotify","api_name":"show_album_library"}}'
     guidance = appworld_json_auth_guidance(
-        [*actions, song_doc, album_doc],
-        prior_results=[*results, "{}", "{}"],
+        [*actions, song_doc, song_call, album_doc],
+        prior_results=[*results, library_doc, "[]", library_doc],
+        task_apps=["spotify"],
+        task_description=task,
+        supervisor_email="user@example.com",
+    )
+    assert '"app":"spotify","api":"show_album_library","arguments":{"access_token":"token-123"}' in guidance
+
+    album_call = '{"app":"spotify","api":"show_album_library","arguments":{"access_token":"token-123"}}'
+    guidance = appworld_json_auth_guidance(
+        [*actions, song_doc, song_call, album_doc, album_call],
+        prior_results=[*results, library_doc, "[]", library_doc, "[]"],
         task_apps=["spotify"],
         task_description=task,
         supervisor_email="user@example.com",

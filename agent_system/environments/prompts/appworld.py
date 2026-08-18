@@ -248,6 +248,43 @@ def appworld_json_auth_guidance(
                     f"Copy this exact JSON object and do nothing else:\n{action_json}"
                 )
 
+            api_doc_index = max(
+                index
+                for index, action in enumerate(parsed_actions)
+                if index > api_list_index and action == api_doc_action
+            )
+            api_doc = parsed_results[api_doc_index]
+            parameters = api_doc.get("parameters") if isinstance(api_doc, dict) else None
+            if not isinstance(parameters, list):
+                continue
+            parameter_names = {
+                parameter.get("name")
+                for parameter in parameters
+                if isinstance(parameter, dict) and isinstance(parameter.get("name"), str)
+            }
+            required_names = {
+                parameter.get("name")
+                for parameter in parameters
+                if isinstance(parameter, dict) and parameter.get("required") is True
+            }
+            if "access_token" not in parameter_names or required_names != {"access_token"}:
+                continue
+            if not any(
+                isinstance(action, dict) and action.get("app") == app_name and action.get("api") == api_name
+                for action in parsed_actions[api_doc_index + 1 :]
+            ):
+                api_call_action = {
+                    "app": app_name,
+                    "api": api_name,
+                    "arguments": {"access_token": access_token},
+                }
+                action_json = json.dumps(api_call_action, separators=(",", ":"))
+                return (
+                    f"MANDATORY NEXT ACTION: execute the documented read-only `{app_name}.{api_name}` once with "
+                    f"its only required authentication argument. Copy this exact JSON object and do nothing else:\n"
+                    f"{action_json}"
+                )
+
     token_context = ", ".join(f"{app_name} access_token={token}" for app_name, token in authenticated_tokens.items())
     api_context = "; ".join(
         f"{app_name}: {', '.join(api_names)}"
