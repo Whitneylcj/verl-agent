@@ -18,7 +18,6 @@
 import json
 import re
 
-
 _APPWORLD_MUTATION_TERMS = {
     "add",
     "clear",
