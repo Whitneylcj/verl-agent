@@ -778,6 +778,7 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                                 [record["action"] for record in self.memory[i]],
                                 prior_results=[record["text_obs"] for record in self.memory[i]],
                                 task_apps=self.allowed_apps[i],
+                                task_description=self.tasks[i],
                                 supervisor_email=self.supervisors[i]["email"],
                                 supervisor_phone_number=self.supervisors[i]["phone_number"],
                             )

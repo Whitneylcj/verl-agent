@@ -122,6 +122,30 @@ def test_json_api_auth_guidance_persists_task_app_access_token():
     assert "spotify access_token=token-123" in guidance
 
 
+def test_json_api_auth_guidance_prioritizes_apps_named_in_task():
+    actions = [
+        '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
+        '{"app":"api_docs","api":"show_api_doc","arguments":{"app_name":"supervisor","api_name":"show_account_passwords"}}',
+        '{"app":"supervisor","api":"show_account_passwords","arguments":{}}',
+    ]
+    results = [
+        "[]",
+        "{}",
+        '[{"account_name":"amazon","password":"a"},{"account_name":"spotify","password":"s"}]',
+    ]
+
+    guidance = appworld_json_auth_guidance(
+        actions,
+        prior_results=results,
+        task_apps=["amazon", "phone", "file_system", "spotify"],
+        task_description="How many songs across my Spotify libraries were released before this year?",
+        supervisor_email="user@example.com",
+    )
+
+    assert '"app_name":"spotify","api_name":"login"' in guidance
+    assert '"app_name":"amazon"' not in guidance
+
+
 def test_json_api_auth_guidance_uses_phone_number_when_login_schema_requires_it():
     actions = [
         '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',

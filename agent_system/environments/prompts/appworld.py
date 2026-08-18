@@ -16,6 +16,7 @@
 # ruff: noqa: E501 - legacy prompt literals intentionally preserve upstream wording.
 
 import json
+import re
 
 
 def appworld_json_auth_guidance(
@@ -23,6 +24,7 @@ def appworld_json_auth_guidance(
     *,
     prior_results=(),
     task_apps=(),
+    task_description="",
     supervisor_email=None,
     supervisor_phone_number=None,
 ) -> str:
@@ -76,6 +78,17 @@ def appworld_json_auth_guidance(
             credentials.update({item["account_name"]: item["password"] for item in result if isinstance(item, dict) and "account_name" in item and "password" in item})
 
     protected_apps = [str(app_name) for app_name in task_apps if app_name not in {"api_docs", "supervisor"}]
+    normalized_task = " ".join(str(task_description).lower().replace("_", " ").split())
+    explicit_apps = [
+        app_name
+        for app_name in protected_apps
+        if re.search(
+            rf"(?<!\w){re.escape(' '.join(app_name.lower().replace('_', ' ').split()))}(?!\w)",
+            normalized_task,
+        )
+    ]
+    if explicit_apps:
+        protected_apps = explicit_apps
     authenticated_tokens = {}
     for app_name in protected_apps:
         login_doc_action = {
