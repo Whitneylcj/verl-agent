@@ -29,7 +29,6 @@ class _FakeBaseEnv:
 def _worker(deterministic_reset):
     base_env = _FakeBaseEnv()
     worker = AlfworldWorker({}, 17, base_env, deterministic_reset=deterministic_reset)
-    worker._refresh_exact_snapshot = lambda: None
     return worker, base_env.batch_env
 
 
@@ -49,3 +48,25 @@ def test_training_worker_advances_without_reseeding():
     worker.reset()
 
     assert batch_env.seed_calls == [17]
+
+
+def test_worker_remembers_target_discovery_after_leaving_observation():
+    worker, _ = _worker(deterministic_reset=False)
+    worker._exact_task_params = {
+        "task_type": "pick_heat_then_place_in_recep",
+        "object_target": "Mug",
+        "parent_target": "CoffeeMachine",
+    }
+    worker._exact_info = {
+        "observation_text": "The fridge is open. In it, you see a mug 1.",
+        "facts": [],
+    }
+    worker._refresh_exact_snapshot()
+    worker._exact_info = {
+        "observation_text": "You arrive at coffeemachine 1.",
+        "facts": [],
+    }
+    worker._refresh_exact_snapshot()
+
+    factor_index = worker._exact_snapshot["factor_ids"].index("object_discovered")
+    assert worker._exact_snapshot["values"][factor_index] == 1.0

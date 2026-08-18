@@ -102,12 +102,55 @@ def test_alfworld_task_probe_compiles_facts_into_subgoals():
     }
     snapshot = alfworld_factor_snapshot(info, task)
     assert snapshot["factor_ids"] == (
+        "object_discovered",
+        "inventory_target_compatible",
         "object_acquired",
         "object_cleaned",
         "object_placed_1",
         "goal_satisfied",
     )
-    assert snapshot["values"] == (1.0, 1.0, 1.0, 0.0)
+    assert snapshot["values"] == (0.0, 1.0, 1.0, 1.0, 1.0, 0.0)
+
+
+def test_alfworld_probe_tracks_observable_discovery_without_task_text_leakage():
+    task = {
+        "task_type": "pick_heat_then_place_in_recep",
+        "object_target": "Mug",
+        "parent_target": "CoffeeMachine",
+    }
+    reset = alfworld_factor_snapshot(
+        {"observation_text": "You see a fridge 1. Your task is to: heat some mug."},
+        task,
+    )
+    visible = alfworld_factor_snapshot(
+        {"observation_text": "The fridge is open. In it, you see a mug 1."},
+        task,
+    )
+    remembered = alfworld_factor_snapshot(
+        {"observation_text": "You arrive at coffeemachine 1.", "exact.object_discovered": True},
+        task,
+    )
+    assert reset["values"][0] == 0.0
+    assert visible["values"][0] == 1.0
+    assert remembered["values"][0] == 1.0
+
+
+def test_alfworld_probe_penalizes_only_wrong_inventory_objects():
+    task = {
+        "task_type": "pick_heat_then_place_in_recep",
+        "object_target": "Mug",
+        "parent_target": "CoffeeMachine",
+    }
+    wrong = alfworld_factor_snapshot(
+        {"facts": [{"name": "holds", "arguments": ["agent", "bowl 1"]}]},
+        task,
+    )
+    target = alfworld_factor_snapshot(
+        {"facts": [{"name": "holds", "arguments": ["agent", "mug 1"]}]},
+        task,
+    )
+    assert wrong["values"][1] == 0.0
+    assert target["values"][1] == 1.0
 
 
 def test_alfworld_pick_two_counts_distinct_object_instances():
@@ -137,8 +180,9 @@ def test_alfworld_probe_reports_current_state_regressions():
         task,
     )
     released = alfworld_factor_snapshot({"facts": []}, task)
-    assert held["values"][0] == 1.0
-    assert released["values"][0] == 0.0
+    acquired_index = held["factor_ids"].index("object_acquired")
+    assert held["values"][acquired_index] == 1.0
+    assert released["values"][acquired_index] == 0.0
 
 
 def test_webshop_missing_components_are_zero_not_unknown_schema():

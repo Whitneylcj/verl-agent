@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -135,6 +136,32 @@ def _alfworld_facts(raw_facts: Any) -> list[tuple[str, tuple[str, ...]]]:
     return result
 
 
+def alfworld_target_is_visible(
+    info: Mapping[str, Any],
+    task_params: Mapping[str, Any],
+) -> bool:
+    """Return whether the current observation exposes the task object."""
+
+    object_target = _normalize_alfworld_entity(task_params.get("object_target", ""))
+    if not object_target:
+        return False
+    observation = info.get("observation_text", "")
+    if isinstance(observation, (list, tuple, np.ndarray)):
+        observation = observation[0] if len(observation) else ""
+    # The reset introduction repeats the target in the task description.  Only
+    # inspect the scene portion so that this does not count as discovery.
+    scene = _normalize_alfworld_entity(observation).split("your task is to:", 1)[0]
+    target_pattern = rf"(?<!\w){re.escape(object_target)}(?: \d+)?(?!\w)"
+    if re.search(target_pattern, scene):
+        return True
+
+    commands = info.get("admissible_commands", ())
+    if isinstance(commands, str):
+        commands = (commands,)
+    command_pattern = re.compile(rf"^(?:take|examine) {re.escape(object_target)}(?: \d+)?(?: |$)")
+    return any(command_pattern.search(_normalize_alfworld_entity(command)) for command in commands)
+
+
 def alfworld_factor_snapshot(
     info: Mapping[str, Any],
     task_params: Mapping[str, Any] | None = None,
@@ -164,7 +191,15 @@ def alfworld_factor_snapshot(
                 return True
         return False
 
+    held_objects = [arguments[-1] for name, arguments in facts if name == "holds" and arguments]
+    holds_wrong_object = any(object_target not in held_object for held_object in held_objects)
+    object_discovered = bool(info.get("exact.object_discovered", False)) or alfworld_target_is_visible(
+        info,
+        task_params,
+    )
     values_by_id: dict[str, float] = {
+        "object_discovered": float(object_discovered),
+        "inventory_target_compatible": float(not holds_wrong_object),
         "object_acquired": float(has_fact("holds", object_target)),
     }
     if "clean" in task_type:
@@ -192,14 +227,17 @@ def alfworld_factor_snapshot(
     values_by_id["goal_satisfied"] = float(bool(info.get("won", False)))
 
     read_sets = {
-        factor_id: ("alfworld.world_facts", "alfworld.task_parameters")
-        for factor_id in values_by_id
+        factor_id: ("alfworld.world_facts", "alfworld.task_parameters") for factor_id in values_by_id
     }
+    read_sets["object_discovered"] = (
+        "alfworld.observation_history",
+        "alfworld.task_parameters",
+    )
     return _snapshot(
         tuple(values_by_id),
         tuple(values_by_id.values()),
         read_sets,
-        f"exact.alfworld.{task_type}.v1",
+        f"exact.alfworld.{task_type}.v2",
     )
 
 

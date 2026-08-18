@@ -39,6 +39,14 @@ model context. Target occupancy alone is insufficient for the one-box probe:
 it changes only at success and therefore collapses Exact-T to outcome-return
 broadcasting across the trajectory.
 
+The ALFWorld snapshot records persistent, observation-derived target discovery,
+whether the inventory is free of a wrong object, target acquisition, required
+state changes such as heating or cleaning, placement, and terminal success.
+Discovery is triggered only by the scene or current admissible commands; the
+target repeated in the task description does not count. These factors use
+already returned observations and facts, never an expert plan or an extra
+environment query.
+
 ## Validation order
 
 Run local theory tests first:

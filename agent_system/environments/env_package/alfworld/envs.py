@@ -67,11 +67,21 @@ class AlfworldWorker:
         self._exact_info = {"won": False}
         self._exact_task_params = None
         self._exact_snapshot = None
+        self._exact_object_discovered = False
 
     def _refresh_exact_snapshot(self):
-        from recipe.exact.env_probes import alfworld_factor_snapshot
+        from recipe.exact.env_probes import alfworld_factor_snapshot, alfworld_target_is_visible
 
-        snapshot = alfworld_factor_snapshot(self._exact_info, self._exact_task_params)
+        if self._exact_task_params and alfworld_target_is_visible(
+            self._exact_info,
+            self._exact_task_params,
+        ):
+            self._exact_object_discovered = True
+        snapshot_info = {
+            **self._exact_info,
+            "exact.object_discovered": self._exact_object_discovered,
+        }
+        snapshot = alfworld_factor_snapshot(snapshot_info, self._exact_task_params)
         if self._exact_snapshot is not None:
             if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
                 raise RuntimeError("ALFWorld factor schema changed within a trajectory")
@@ -103,6 +113,7 @@ class AlfworldWorker:
         gamefile = self._exact_info.get("extra.gamefile")
         self._exact_task_params = None
         self._exact_snapshot = None
+        self._exact_object_discovered = False
         if gamefile:
             trajectory_path = os.path.join(os.path.dirname(gamefile), "traj_data.json")
             with open(trajectory_path, encoding="utf-8") as handle:
