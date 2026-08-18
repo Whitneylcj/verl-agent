@@ -19,6 +19,46 @@ import json
 import re
 
 
+def _appworld_task_terms(text):
+    terms = set()
+    for token in re.findall(r"[a-z0-9]+", str(text).lower().replace("_", " ")):
+        if len(token) <= 2:
+            continue
+        if token.endswith("ies") and len(token) > 4:
+            token = f"{token[:-3]}y"
+        elif token.endswith("s") and len(token) > 3:
+            token = token[:-1]
+        terms.add(token)
+    return terms
+
+
+def _appworld_relevant_api_names(api_descriptions, task_description, limit=3):
+    task_terms = _appworld_task_terms(task_description)
+    if not task_terms or not isinstance(api_descriptions, list):
+        return []
+    candidates = []
+    for entry in api_descriptions:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        name = entry["name"]
+        if name in {"login", "logout", "signup"}:
+            continue
+        api_terms = _appworld_task_terms(f"{name} {entry.get('description', '')}")
+        overlap = task_terms & api_terms
+        if overlap:
+            task_text = str(task_description).lower()
+            task_position = min(
+                (task_text.find(term) for term in overlap if task_text.find(term) >= 0),
+                default=len(task_text),
+            )
+            candidates.append((-len(overlap), task_position, name))
+    candidates.sort()
+    if not candidates:
+        return []
+    best_overlap = -candidates[0][0]
+    return [name for negative_overlap, _, name in candidates if -negative_overlap == best_overlap][:limit]
+
+
 def appworld_json_auth_guidance(
     prior_actions,
     *,
@@ -147,12 +187,36 @@ def appworld_json_auth_guidance(
             action_json = json.dumps(api_list_action, separators=(",", ":"))
             return f"MANDATORY NEXT ACTION: login succeeded; now list the documented `{app_name}` APIs. Copy this exact JSON object and do nothing else:\n{action_json}"
 
+        api_list_index = max(
+            index
+            for index, action in enumerate(parsed_actions)
+            if index > login_index and action == api_list_action
+        )
+        relevant_api_names = _appworld_relevant_api_names(
+            parsed_results[api_list_index],
+            task_description,
+        )
+        for api_name in relevant_api_names:
+            api_doc_action = {
+                "app": "api_docs",
+                "api": "show_api_doc",
+                "arguments": {"app_name": app_name, "api_name": api_name},
+            }
+            if api_doc_action not in parsed_actions[api_list_index + 1 :]:
+                action_json = json.dumps(api_doc_action, separators=(",", ":"))
+                return (
+                    f"MANDATORY NEXT ACTION: inspect the exact schema for task-relevant `{app_name}.{api_name}`. "
+                    f"Copy this exact JSON object and do nothing else:\n{action_json}"
+                )
+
     token_context = ", ".join(f"{app_name} access_token={token}" for app_name, token in authenticated_tokens.items())
     return (
         "Authentication bootstrap is complete. Inspect the exact API doc for the task operation before calling it. "
         f"Persistent authentication context: {token_context or 'no protected task app was identified'}. "
         "Copy the matching access_token into every protected call. If a call returns 401, repair authentication "
-        "instead of repeating it."
+        "instead of repeating it. Never invent a derived API name. If a result lacks a required field, inspect the "
+        "exact doc for a real detail or search API from the listed names. Never repeat a read call unless pagination, "
+        "query, or another documented argument changes."
     )
 
 
