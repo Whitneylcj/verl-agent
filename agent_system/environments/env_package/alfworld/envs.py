@@ -59,8 +59,10 @@ class AlfworldWorker:
     Each actor holds one environment instance.
     """
     
-    def __init__(self, config, seed, base_env):
+    def __init__(self, config, seed, base_env, deterministic_reset=False):
         self.env = base_env.init_env(batch_size=1)  # Each worker holds only one sub-environment
+        self.seed = seed
+        self.deterministic_reset = deterministic_reset
         self.env.seed(seed)
         self._exact_info = {"won": False}
         self._exact_task_params = None
@@ -90,6 +92,8 @@ class AlfworldWorker:
     
     def reset(self):
         """Reset the environment"""
+        if self.deterministic_reset:
+            self.env.seed(self.seed)
         obs, infos = self.env.reset()
         infos['observation_text'] = obs
         self._exact_info = {
@@ -142,7 +146,12 @@ class AlfworldEnvs(gym.Env):
         env_worker = ray.remote(**resources_per_worker)(AlfworldWorker)
         self.workers = []
         for i in range(self.num_processes):
-            worker = env_worker.remote(config, seed + (i // self.group_n), base_env)
+            worker = env_worker.remote(
+                config,
+                seed + (i // self.group_n),
+                base_env,
+                not is_train,
+            )
             self.workers.append(worker)
 
         self.prev_admissible_commands = [None for _ in range(self.num_processes)]
