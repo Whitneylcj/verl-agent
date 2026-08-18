@@ -81,3 +81,5 @@ def test_sokoban_prompt_exposes_only_current_observation_constraints():
 
     assert "Choose only an action that changes the board: [up, left, right]" in prompt
     assert "Legal box pushes available now: [up]" in prompt
+    assert "your action MUST be one of: [up]" in prompt
+    assert prompt.rfind("# Current Legal Actions") > prompt.rfind("Line 2 must be exactly one of")

@@ -83,10 +83,15 @@ def _sokoban_action_constraint(text_observation: Any) -> str:
     legal_actions, legal_pushes = inferred
     legal_text = ", ".join(legal_actions) if legal_actions else "none"
     push_text = ", ".join(legal_pushes) if legal_pushes else "none"
+    if legal_pushes:
+        priority_rule = f"A legal box push exists, so your action MUST be one of: [{push_text}]."
+    else:
+        priority_rule = f"No immediate box push exists, so your action MUST be one of: [{legal_text}]."
     return (
         "# Current Legal Actions\n"
         f"Choose only an action that changes the board: [{legal_text}]. "
-        f"Legal box pushes available now: [{push_text}]."
+        f"Legal box pushes available now: [{push_text}].\n"
+        f"{priority_rule} This current-state rule overrides the generic four-direction list above."
     )
 
 
@@ -413,13 +418,10 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
             
         for i in range(len(infos)):
             action_constraint = _sokoban_action_constraint(text_obs[i]) if text_obs is not None else ""
-            constrained_observation = (
-                f"{text_obs[i]}\n{action_constraint}" if action_constraint else text_obs[i]
-            ) if text_obs is not None else None
             if init or self.config.env.history_length <= 0:
                 obs = SOKOBAN_VISUAL_TEMPLATE if self.is_multi_modal \
                  else SOKOBAN_TEMPLATE_NO_HIS.format(
-                    current_observation=constrained_observation,
+                    current_observation=text_obs[i],
                 )
             else:
                 if self.is_multi_modal:
@@ -431,9 +433,11 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
                         history_length=valid_lens[i],
                         action_history=memory_contexts[i],
                         current_step=len(self.memory[i]) + 1,
-                        current_observation=constrained_observation,
+                        current_observation=text_obs[i],
                         loop_warning=loop_warning,
                     )
+            if action_constraint:
+                obs = f"{obs.rstrip()}\n\n{action_constraint}\n"
             postprocess_text_obs.append(obs)
 
         return postprocess_text_obs
