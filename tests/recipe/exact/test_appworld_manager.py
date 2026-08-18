@@ -7,7 +7,7 @@ pytest.importorskip("omegaconf")
 
 from agent_system.environments.env_manager import AppWorldEnvironmentManager
 from agent_system.environments.env_package.appworld.envs import appworld_execution_succeeded
-from agent_system.environments.prompts.appworld import appworld_json_auth_guidance
+from agent_system.environments.prompts.appworld import _appworld_relevant_api_names, appworld_json_auth_guidance
 
 
 class _FakeAppWorldEnvs:
@@ -147,6 +147,26 @@ def test_json_api_auth_guidance_prioritizes_apps_named_in_task():
     assert '"app_name":"amazon"' not in guidance
 
 
+def test_appworld_api_ranking_prefers_read_only_library_endpoints():
+    descriptions = [
+        {"name": "play_music", "description": "Play a song, album, or playlist."},
+        {"name": "remove_song_from_library", "description": "Remove a song from your library."},
+        {"name": "show_song", "description": "Get details of a specific song."},
+        {"name": "show_song_library", "description": "Show songs in your song library."},
+        {"name": "show_album_library", "description": "Show albums in your album library."},
+        {"name": "search_albums", "description": "Search albums with a query."},
+    ]
+    task = "How many songs across my song and album libraries were released before this year?"
+
+    ranked = _appworld_relevant_api_names(descriptions, task, limit=6)
+
+    assert ranked[:2] == ["show_song_library", "show_album_library"]
+    assert "show_song" in ranked
+    assert "search_albums" in ranked
+    assert "play_music" not in ranked
+    assert "remove_song_from_library" not in ranked
+
+
 def test_json_api_auth_guidance_inspects_top_task_api_schemas():
     actions = [
         '{"app":"api_docs","api":"show_api_descriptions","arguments":{"app_name":"supervisor"}}',
@@ -201,6 +221,7 @@ def test_json_api_auth_guidance_inspects_top_task_api_schemas():
     )
     assert "Authentication bootstrap is complete" in guidance
     assert "Never invent a derived API name" in guidance
+    assert "spotify: show_song_library, show_album_library" in guidance
 
 
 def test_json_api_auth_guidance_uses_phone_number_when_login_schema_requires_it():

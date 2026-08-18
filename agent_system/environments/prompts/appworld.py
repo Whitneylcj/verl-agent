@@ -19,6 +19,34 @@ import json
 import re
 
 
+_APPWORLD_MUTATION_TERMS = {
+    "add",
+    "clear",
+    "create",
+    "delete",
+    "download",
+    "follow",
+    "like",
+    "loop",
+    "move",
+    "pause",
+    "play",
+    "remove",
+    "reset",
+    "review",
+    "seek",
+    "send",
+    "set",
+    "shuffle",
+    "subscribe",
+    "unfollow",
+    "unlike",
+    "update",
+    "verify",
+}
+_APPWORLD_READ_PREFIXES = ("get_", "list_", "search_", "show_")
+
+
 def _appworld_task_terms(text):
     terms = set()
     for token in re.findall(r"[a-z0-9]+", str(text).lower().replace("_", " ")):
@@ -43,20 +71,28 @@ def _appworld_relevant_api_names(api_descriptions, task_description, limit=3):
         name = entry["name"]
         if name in {"login", "logout", "signup"}:
             continue
-        api_terms = _appworld_task_terms(f"{name} {entry.get('description', '')}")
-        overlap = task_terms & api_terms
+        name_terms = _appworld_task_terms(name)
+        unrequested_mutations = (name_terms & _APPWORLD_MUTATION_TERMS) - task_terms
+        if unrequested_mutations:
+            continue
+        description_terms = _appworld_task_terms(entry.get("description", ""))
+        name_overlap = task_terms & name_terms
+        description_overlap = task_terms & description_terms
+        overlap = name_overlap | description_overlap
         if overlap:
             task_text = str(task_description).lower()
             task_position = min(
-                (task_text.find(term) for term in overlap if task_text.find(term) >= 0),
+                (task_text.find(term) for term in name_overlap if task_text.find(term) >= 0),
                 default=len(task_text),
             )
-            candidates.append((-len(overlap), task_position, name))
+            score = 4 * len(name_overlap) + len(description_overlap)
+            if name.startswith(_APPWORLD_READ_PREFIXES):
+                score += 2
+            if "library" in task_terms and "library" in name_terms:
+                score += 2
+            candidates.append((-score, task_position, name))
     candidates.sort()
-    if not candidates:
-        return []
-    best_overlap = -candidates[0][0]
-    return [name for negative_overlap, _, name in candidates if -negative_overlap == best_overlap][:limit]
+    return [name for _, _, name in candidates[:limit]]
 
 
 def appworld_json_auth_guidance(
@@ -130,6 +166,7 @@ def appworld_json_auth_guidance(
     if explicit_apps:
         protected_apps = explicit_apps
     authenticated_tokens = {}
+    task_api_allowlists = {}
     for app_name in protected_apps:
         login_doc_action = {
             "app": "api_docs",
@@ -195,8 +232,10 @@ def appworld_json_auth_guidance(
         relevant_api_names = _appworld_relevant_api_names(
             parsed_results[api_list_index],
             task_description,
+            limit=6,
         )
-        for api_name in relevant_api_names:
+        task_api_allowlists[app_name] = relevant_api_names
+        for api_name in relevant_api_names[:2]:
             api_doc_action = {
                 "app": "api_docs",
                 "api": "show_api_doc",
@@ -210,9 +249,15 @@ def appworld_json_auth_guidance(
                 )
 
     token_context = ", ".join(f"{app_name} access_token={token}" for app_name, token in authenticated_tokens.items())
+    api_context = "; ".join(
+        f"{app_name}: {', '.join(api_names)}"
+        for app_name, api_names in task_api_allowlists.items()
+        if api_names
+    )
     return (
         "Authentication bootstrap is complete. Inspect the exact API doc for the task operation before calling it. "
         f"Persistent authentication context: {token_context or 'no protected task app was identified'}. "
+        f"Documented task-relevant API names: {api_context or 'none ranked; re-list the app APIs'}. "
         "Copy the matching access_token into every protected call. If a call returns 401, repair authentication "
         "instead of repeating it. Never invent a derived API name. If a result lacks a required field, inspect the "
         "exact doc for a real detail or search API from the listed names. Never repeat a read call unless pagination, "
