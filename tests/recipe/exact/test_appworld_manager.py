@@ -143,6 +143,17 @@ def test_json_api_auth_guidance_prioritizes_apps_named_in_task():
         supervisor_email="user@example.com",
     )
 
+    clock_action = '{"app":"phone","api":"get_current_date_and_time","arguments":{}}'
+    assert clock_action in guidance
+    assert '"app_name":"amazon"' not in guidance
+
+    guidance = appworld_json_auth_guidance(
+        [*actions, clock_action],
+        prior_results=[*results, '{"date":"2026-08-18","time":"09:00:00"}'],
+        task_apps=["amazon", "phone", "file_system", "spotify"],
+        task_description="How many songs across my Spotify libraries were released before this year?",
+        supervisor_email="user@example.com",
+    )
     assert '"app_name":"spotify","api_name":"login"' in guidance
     assert '"app_name":"amazon"' not in guidance
 
