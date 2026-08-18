@@ -30,14 +30,15 @@ clipping, KL regularization, and repeated optimizer steps are practical training
 choices and are reported separately from the raw on-policy identity.
 Programmatic 0–1 factors use the normalized potential scale `1.0` by default;
 set `POTENTIAL_SCALE` only as a declared ablation, never as an implicit tuning
-change between matched runs.
+change between matched runs. Environments may instead provide fixed intrinsic
+weights when their official reward decomposition defines the factor scale.
 
-The Sokoban verifier snapshot includes per-target occupancy, normalized minimum
-box-to-target Manhattan matching progress, and a conservative static-corner
-deadlock flag. These factors expose pre-terminal progress without entering the
-model context. Target occupancy alone is insufficient for the one-box probe:
-it changes only at success and therefore collapses Exact-T to outcome-return
-broadcasting across the trajectory.
+The Sokoban verifier uses only gym-sokoban's official reward events: one step
+penalty, a box pushed onto a target, a box pushed off a target, and all boxes on
+targets. Their cumulative event counts carry the package's native weights
+`-0.1`, `+1`, `-1`, and `+10`. Every checkpoint delta is checked against the
+observed environment reward; no distance, deadlock, or other heuristic shaping
+factor is part of the default schema.
 
 The ALFWorld snapshot records persistent, observation-derived target discovery,
 whether the inventory is free of a wrong object, target acquisition, required

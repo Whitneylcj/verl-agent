@@ -25,21 +25,21 @@ class SokobanWorker:
     Ray remote actor that replaces the worker function.
     Each actor holds its own independent instance of SokobanEnv.
     """
-    
+
     def __init__(self, mode, env_kwargs):
         """Initialize the Sokoban environment in this worker"""
         self.env = SokobanEnv(mode, **env_kwargs)
-    
+
     def step(self, action):
         """Execute a step in the environment"""
         obs, reward, done, info = self.env.step(action)
         return obs, reward, done, info
-    
+
     def reset(self, seed_for_reset):
         """Reset the environment with given seed"""
         obs, info = self.env.reset(seed=seed_for_reset)
         return obs, info
-    
+
     def render(self, mode_for_render):
         """Render the environment"""
         rendered = self.env.render(mode=mode_for_render)
@@ -48,7 +48,11 @@ class SokobanWorker:
     def exact_credit_snapshot(self):
         from recipe.exact.env_probes import sokoban_factor_snapshot
 
-        return sokoban_factor_snapshot(self.env.room_fixed, self.env.room_state)
+        factor_state = self.env.exact_reward_factor_state()
+        return sokoban_factor_snapshot(
+            factor_state["event_counts"],
+            factor_state["reward_weights"],
+        )
 
 
 class SokobanMultiProcessEnv(gym.Env):
@@ -58,14 +62,7 @@ class SokobanMultiProcessEnv(gym.Env):
     The main process communicates with Ray actors to collect step/reset results.
     """
 
-    def __init__(self,
-                 seed=0, 
-                 env_num=1, 
-                 group_n=1, 
-                 mode='rgb_array',
-                 resources_per_worker=None,
-                 is_train=True,
-                 env_kwargs=None):
+    def __init__(self, seed=0, env_num=1, group_n=1, mode="rgb_array", resources_per_worker=None, is_train=True, env_kwargs=None):
         """
         - env_num: Number of different environments
         - group_n: Number of same environments in each group (for GRPO and GiGPO)
@@ -168,7 +165,7 @@ class SokobanMultiProcessEnv(gym.Env):
             info_list.append(info)
         return obs_list, info_list
 
-    def render(self, mode='rgb_array', env_idx=None):
+    def render(self, mode="rgb_array", env_idx=None):
         """
         Request rendering from Ray actor environments.
         Can specify env_idx to get render result from a specific environment,
@@ -200,12 +197,5 @@ class SokobanMultiProcessEnv(gym.Env):
         self.close()
 
 
-def build_sokoban_envs(
-        seed=0,
-        env_num=1,
-        group_n=1,
-        mode='rgb_array',
-        resources_per_worker=None,
-        is_train=True,
-        env_kwargs=None):
+def build_sokoban_envs(seed=0, env_num=1, group_n=1, mode="rgb_array", resources_per_worker=None, is_train=True, env_kwargs=None):
     return SokobanMultiProcessEnv(seed, env_num, group_n, mode, resources_per_worker, is_train, env_kwargs=env_kwargs)

@@ -24,8 +24,10 @@ class FactorSnapshot:
     """Programmatic verifier state at one environment checkpoint.
 
     ``values`` are training-only instrumentation and must never be inserted into
-    the policy prompt. ``read_sets`` describes the state resources each factor
-    may read; missing entries are treated as unknown rather than empty.
+    the policy prompt. ``potential_weights`` optionally carries fixed weights
+    defined by an environment's official reward decomposition. ``read_sets``
+    describes the state resources each factor may read; missing entries are
+    treated as unknown rather than empty.
     """
 
     checkpoint_id: int
@@ -33,6 +35,7 @@ class FactorSnapshot:
     values: np.ndarray
     read_sets: Mapping[str, ResourceSet] = field(default_factory=dict)
     schema_version: str = "exact.credit.v1"
+    potential_weights: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         factor_ids = _stable_unique_strings(self.factor_ids, "factor_ids")
@@ -41,6 +44,11 @@ class FactorSnapshot:
             raise ValueError("values must be one-dimensional and aligned with factor_ids")
         if not np.all(np.isfinite(values)):
             raise ValueError("factor values must be finite")
+        potential_weights = self.potential_weights
+        if potential_weights is not None:
+            potential_weights = np.asarray(potential_weights, dtype=np.float64)
+            if potential_weights.shape != values.shape or not np.all(np.isfinite(potential_weights)):
+                raise ValueError("potential_weights must be finite and aligned with factor_ids")
         if self.checkpoint_id < 0:
             raise ValueError("checkpoint_id must be non-negative")
 
@@ -52,6 +60,7 @@ class FactorSnapshot:
 
         object.__setattr__(self, "factor_ids", factor_ids)
         object.__setattr__(self, "values", values)
+        object.__setattr__(self, "potential_weights", potential_weights)
         object.__setattr__(self, "read_sets", normalized_read_sets)
 
     def value_by_id(self) -> Mapping[str, float]:
@@ -138,9 +147,7 @@ def snapshots_from_values(
 ) -> tuple[FactorSnapshot, ...]:
     """Convenience constructor used by fixtures and simple environment probes."""
 
-    normalized_read_sets = {
-        factor_id: tuple(resources) for factor_id, resources in (read_sets or {}).items()
-    }
+    normalized_read_sets = {factor_id: tuple(resources) for factor_id, resources in (read_sets or {}).items()}
     return tuple(
         FactorSnapshot(
             checkpoint_id=checkpoint_id,

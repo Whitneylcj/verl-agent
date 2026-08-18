@@ -9,75 +9,63 @@ from recipe.exact.env_probes import (
     webshop_factor_snapshot,
 )
 
+SOKOBAN_REWARD_WEIGHTS = {
+    "step_penalty": -0.1,
+    "box_on_target_reward": 1.0,
+    "box_off_target_penalty": -1.0,
+    "all_boxes_on_target_reward": 10.0,
+}
 
-def test_sokoban_target_bits_have_stable_coordinate_ids():
-    fixed = np.array(
-        [
-            [0, 0, 0, 0, 0, 0],
-            [0, 1, 2, 1, 2, 0],
-            [0, 1, 1, 1, 1, 0],
-            [0, 1, 1, 1, 1, 0],
-            [0, 0, 0, 0, 0, 0],
-        ]
-    )
-    state = fixed.copy()
-    state[1, 2] = 3
-    state[2, 3] = 4
-    state[3, 1] = 5
-    snapshot = sokoban_factor_snapshot(fixed, state)
+
+def test_sokoban_snapshot_uses_only_official_reward_events():
+    event_counts = {
+        "step_penalty": 4,
+        "box_on_target_reward": 2,
+        "box_off_target_penalty": 1,
+        "all_boxes_on_target_reward": 1,
+    }
+    snapshot = sokoban_factor_snapshot(event_counts, SOKOBAN_REWARD_WEIGHTS)
     assert snapshot["factor_ids"] == (
-        "target:1:2",
-        "target:1:4",
-        "matching_progress",
-        "deadlock_free",
+        "step_penalty",
+        "box_on_target_reward",
+        "box_off_target_penalty",
+        "all_boxes_on_target_reward",
     )
-    assert snapshot["values"] == pytest.approx((1.0, 0.0, 8 / 9, 1.0))
-    assert snapshot["schema_version"] == "exact.sokoban.progress.v2"
+    assert snapshot["values"] == (4.0, 2.0, 1.0, 1.0)
+    assert snapshot["potential_weights"] == (-0.1, 1.0, -1.0, 10.0)
+    assert snapshot["schema_version"] == "exact.sokoban.official_reward.v1"
 
 
-def test_sokoban_matching_progress_increases_as_box_approaches_target():
-    fixed = np.array(
-        [
-            [0, 0, 0, 0, 0],
-            [0, 1, 1, 2, 0],
-            [0, 1, 1, 1, 0],
-            [0, 1, 1, 1, 0],
-            [0, 0, 0, 0, 0],
-        ]
+def test_sokoban_official_factor_deltas_reconstruct_each_step_reward():
+    checkpoints = (
+        (0, 0, 0, 0),
+        (1, 0, 0, 0),
+        (2, 1, 0, 0),
+        (3, 1, 1, 0),
+        (4, 2, 1, 1),
     )
-    far_state = fixed.copy()
-    far_state[3, 1] = 4
-    near_state = fixed.copy()
-    near_state[2, 2] = 4
-    factor_index = sokoban_factor_snapshot(fixed, far_state)["factor_ids"].index("matching_progress")
-    far_progress = sokoban_factor_snapshot(fixed, far_state)["values"][factor_index]
-    near_progress = sokoban_factor_snapshot(fixed, near_state)["values"][factor_index]
-    assert near_progress > far_progress
+    weights = np.asarray(tuple(SOKOBAN_REWARD_WEIGHTS.values()))
+    values = np.asarray(checkpoints, dtype=np.float64)
+    reconstructed = np.diff(values, axis=0) @ weights
+    np.testing.assert_allclose(reconstructed, (-0.1, 0.9, -1.1, 10.9))
 
 
-def test_sokoban_deadlock_factor_ignores_boxes_already_on_target():
-    fixed = np.array(
-        [
-            [0, 0, 0, 0, 0],
-            [0, 1, 1, 2, 0],
-            [0, 1, 1, 1, 0],
-            [0, 1, 1, 1, 0],
-            [0, 0, 0, 0, 0],
-        ]
-    )
-    corner_state = fixed.copy()
-    corner_state[1, 1] = 4
-    solved_state = fixed.copy()
-    solved_state[1, 3] = 3
-    deadlock_index = sokoban_factor_snapshot(fixed, corner_state)["factor_ids"].index("deadlock_free")
-    assert sokoban_factor_snapshot(fixed, corner_state)["values"][deadlock_index] == 0.0
-    assert sokoban_factor_snapshot(fixed, solved_state)["values"][deadlock_index] == 1.0
-
-
-def test_sokoban_probe_rejects_box_target_count_mismatch():
-    fixed = np.array([[0, 0, 0], [0, 2, 0], [0, 0, 0]])
-    with pytest.raises(ValueError, match="0 boxes for 1 targets"):
-        sokoban_factor_snapshot(fixed, fixed.copy())
+def test_sokoban_probe_rejects_non_official_or_invalid_factors():
+    with pytest.raises(ValueError, match="missing=.*all_boxes_on_target_reward"):
+        sokoban_factor_snapshot(
+            {"step_penalty": 0, "box_on_target_reward": 0, "box_off_target_penalty": 0},
+            SOKOBAN_REWARD_WEIGHTS,
+        )
+    with pytest.raises(ValueError, match="non-negative integers"):
+        sokoban_factor_snapshot(
+            {
+                "step_penalty": 0.5,
+                "box_on_target_reward": 0,
+                "box_off_target_penalty": 0,
+                "all_boxes_on_target_reward": 0,
+            },
+            SOKOBAN_REWARD_WEIGHTS,
+        )
 
 
 def test_alfworld_goal_probe_is_available_from_sparse_info():

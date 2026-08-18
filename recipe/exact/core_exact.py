@@ -101,6 +101,7 @@ def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnap
         raise ValueError("EXACT requires an initial and at least one post-action checkpoint")
     factor_ids = snapshots[0].factor_ids
     schema_version = snapshots[0].schema_version
+    potential_weights = snapshots[0].potential_weights
     for expected_checkpoint, snapshot in enumerate(snapshots):
         if snapshot.checkpoint_id != expected_checkpoint:
             raise ValueError("checkpoint IDs must be contiguous and start at zero")
@@ -108,6 +109,14 @@ def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnap
             raise ValueError("factor IDs must remain stable within a trajectory")
         if snapshot.schema_version != schema_version:
             raise ValueError("factor schema version changed within a trajectory")
+        weights_changed = (potential_weights is None) != (snapshot.potential_weights is None)
+        if potential_weights is not None and snapshot.potential_weights is not None:
+            weights_changed = weights_changed or not np.array_equal(
+                snapshot.potential_weights,
+                potential_weights,
+            )
+        if weights_changed:
+            raise ValueError("factor potential weights changed within a trajectory")
     return snapshots
 
 
@@ -144,10 +153,7 @@ def build_conserved_atoms(
             )
 
     residual_value = float(episode_return - potential(snapshots[-1]) + potential(snapshots[0]))
-    residual_read_set = sorted(
-        {resource for snapshot in snapshots for resources in snapshot.read_sets.values() for resource in resources}
-        | {"episode_return"}
-    )
+    residual_read_set = sorted({resource for snapshot in snapshots for resources in snapshot.read_sets.values() for resource in resources} | {"episode_return"})
     atoms.append(
         CreditAtom(
             atom_id="residual",
@@ -172,11 +178,7 @@ def temporal_routes(routes: Sequence[SpanRoute], atoms: Sequence[CreditAtom]) ->
     residual_id = next(atom.atom_id for atom in atoms if atom.is_residual)
     result = []
     for route in routes:
-        descendants = [
-            atom.atom_id
-            for atom in atoms
-            if atom.is_residual or (atom.step_id is not None and atom.step_id >= route.span.step_id)
-        ]
+        descendants = [atom.atom_id for atom in atoms if atom.is_residual or (atom.step_id is not None and atom.step_id >= route.span.step_id)]
         if residual_id not in descendants:
             descendants.append(residual_id)
         result.append(
@@ -332,9 +334,7 @@ class DelayedAlphaController:
             raise ValueError("delayed alpha checkpoint hyperparameters do not match this run")
         active = {str(key): float(value) for key, value in dict(state["active_alpha"]).items()}
         pending_state = state.get("pending_alpha")
-        pending = None if pending_state is None else {
-            str(key): float(value) for key, value in dict(pending_state).items()
-        }
+        pending = None if pending_state is None else {str(key): float(value) for key, value in dict(pending_state).items()}
         if set(active) != set(self.bucket_names) or (pending is not None and set(pending) != set(self.bucket_names)):
             raise ValueError("delayed alpha checkpoint has an incompatible bucket schema")
         self._active_alpha = active

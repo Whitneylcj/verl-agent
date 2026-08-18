@@ -95,6 +95,29 @@ def test_exact_advantage_is_padding_safe_and_trajectory_normalized():
     assert len(traces) == 2
 
 
+def test_environment_potential_weights_replace_normalized_default():
+    data = _test_batch()
+    for key in ("exact_factor_pre", "exact_factor_post"):
+        for snapshot in data.non_tensor_batch[key]:
+            snapshot["potential_weights"] = (1.0, 2.0)
+
+    data, metrics, _ = compute_exact_advantage(
+        data,
+        config={"mode": "graph", "force_residual_descendant": False},
+    )
+
+    expected = torch.tensor(
+        [
+            [2.0, 2.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [4.0, 4.0, 4.0],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+    torch.testing.assert_close(data.batch["advantages"], expected)
+    assert metrics["exact/residual_ratio_mean"] == 0.0
+
+
 def test_scaled_seq_mean_loss_equals_trajectory_mean_span_token_sum():
     pytest.importorskip("ray")
     from verl.trainer.ppo.core_algos import agg_loss

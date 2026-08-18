@@ -44,16 +44,20 @@ def _snapshot_from_record(record: Any, checkpoint_id: int) -> FactorSnapshot:
         checkpoint_id=checkpoint_id,
         factor_ids=tuple(record["factor_ids"]),
         values=np.asarray(record["values"], dtype=np.float64),
+        potential_weights=(None if record.get("potential_weights") is None else np.asarray(record["potential_weights"], dtype=np.float64)),
         read_sets={key: tuple(value) for key, value in record.get("read_sets", {}).items()},
         schema_version=str(record.get("schema_version", "exact.credit.v1")),
     )
 
 
-def _make_potential(factor_ids: Sequence[str], config: Any) -> IdentityPotential:
+def _make_potential(snapshot: FactorSnapshot, config: Any) -> IdentityPotential:
+    factor_ids = snapshot.factor_ids
     potential_config = _config_get(config, "potential", {})
     weights_config = _config_get(potential_config, "weights", None)
     if weights_config is None:
         scale = float(_config_get(potential_config, "scale", 1.0))
+        if snapshot.potential_weights is not None:
+            return IdentityPotential(factor_ids, scale * snapshot.potential_weights)
         return IdentityPotential.normalized(factor_ids, scale=scale)
     if isinstance(weights_config, Mapping):
         missing = set(factor_ids) - set(weights_config)
@@ -75,12 +79,14 @@ def _trajectory_snapshots(rows: Sequence[int], data: Any) -> tuple[FactorSnapsho
     snapshots = [_snapshot_from_record(data.non_tensor_batch["exact_factor_pre"][rows[0]], 0)]
     for position, row in enumerate(rows, start=1):
         recorded_pre = _snapshot_from_record(data.non_tensor_batch["exact_factor_pre"][row], position - 1)
-        if recorded_pre.factor_ids != snapshots[-1].factor_ids or not np.allclose(
-            recorded_pre.values,
-            snapshots[-1].values,
-            rtol=0.0,
-            atol=1e-10,
-        ):
+        previous = snapshots[-1]
+        weights_match = (recorded_pre.potential_weights is None) == (previous.potential_weights is None)
+        if recorded_pre.potential_weights is not None and previous.potential_weights is not None:
+            weights_match = weights_match and np.array_equal(
+                recorded_pre.potential_weights,
+                previous.potential_weights,
+            )
+        if recorded_pre.factor_ids != previous.factor_ids or not np.allclose(recorded_pre.values, previous.values, rtol=0.0, atol=1e-10) or not weights_match:
             raise ValueError(f"factor checkpoint discontinuity before trajectory step {position}")
         snapshots.append(_snapshot_from_record(data.non_tensor_batch["exact_factor_post"][row], position))
     return tuple(snapshots)
@@ -254,7 +260,7 @@ def compute_exact_advantage(
 
     for trajectory_id, rows in trajectory_rows.items():
         snapshots = _trajectory_snapshots(rows, data)
-        potential = _make_potential(snapshots[0].factor_ids, config)
+        potential = _make_potential(snapshots[0], config)
         episode_return = _trajectory_return(rows, data)
         conserved = build_conserved_atoms(
             snapshots,
