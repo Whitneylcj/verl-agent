@@ -5,6 +5,7 @@ pytest.importorskip("gym_sokoban")
 pytest.importorskip("ray")
 
 from agent_system.environments.env_package.sokoban.sokoban.env import SokobanEnv
+from agent_system.multi_turn_rollout.rollout_loop import _new_episode_reward_accumulator
 from recipe.exact.core_exact import IdentityPotential, build_scoped_conserved_atoms
 from recipe.exact.credit_spec import FactorSnapshot
 from recipe.exact.env_probes import sokoban_factor_snapshot
@@ -161,3 +162,36 @@ def test_truncated_episode_has_zero_local_closures_and_opaque_target():
     assert conserved.closure_abs_mass == pytest.approx(0.0, abs=1e-12)
     assert conserved.opaque_target_atom.value == pytest.approx(0.0, abs=1e-12)
     assert sum(conserved.channel_target_masses.values()) == pytest.approx(sum(rewards))
+
+
+def test_float64_rollout_return_survives_strict_conservation_check():
+    env = _environment(
+        [[0, 0, 0, 0, 0], [0, 1, 1, 2, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0]],
+        [[0, 0, 0, 0, 0], [0, 5, 1, 2, 0], [0, 1, 4, 1, 0], [0, 0, 0, 0, 0]],
+        0,
+    )
+    snapshots = [_snapshot(env)]
+    episode_return = _new_episode_reward_accumulator(1)
+    assert episode_return.dtype == np.float64
+    for _ in range(15):
+        _, reward, _, _ = env.step(env.INVALID_ACTION)
+        episode_return[0] += reward
+        snapshots.append(_snapshot(env))
+
+    typed_snapshots = tuple(
+        _typed_snapshot(checkpoint_id, snapshot)
+        for checkpoint_id, snapshot in enumerate(snapshots)
+    )
+    potential = IdentityPotential(
+        typed_snapshots[0].factor_ids,
+        typed_snapshots[0].potential_weights,
+    )
+    conserved = build_scoped_conserved_atoms(
+        typed_snapshots,
+        episode_return=float(episode_return[0]),
+        potential=potential,
+        tolerance=1e-8,
+    )
+
+    assert conserved.conservation_error <= 1e-8
+    assert conserved.opaque_target_atom.value == pytest.approx(0.0, abs=1e-8)

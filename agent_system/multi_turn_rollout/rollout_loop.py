@@ -30,6 +30,12 @@ from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
 
 
+def _new_episode_reward_accumulator(batch_size: int) -> np.ndarray:
+    """Allocate a high-precision accumulator for environment returns."""
+
+    return np.zeros(batch_size, dtype=np.float64)
+
+
 class TrajectoryCollector:
     def __init__(self, config, tokenizer: PreTrainedTokenizer, processor=None):
         """
@@ -339,7 +345,12 @@ class TrajectoryCollector:
         total_batch_list = [[] for _ in range(batch_size)]
         total_infos = [[] for _ in range(batch_size)]
         episode_lengths = np.zeros(batch_size, dtype=np.float32)
-        episode_rewards = np.zeros(batch_size, dtype=np.float32)
+        # Keep environment returns in float64 until the reward manager performs
+        # its explicit float32 tensor conversion.  EXACT compares the summed
+        # return with native weighted event counts at a strict 1e-8 tolerance;
+        # float32 accumulation alone can otherwise create false conservation
+        # failures (for example, fifteen -0.1 Sokoban step penalties).
+        episode_rewards = _new_episode_reward_accumulator(batch_size)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
         use_exact = str(self.config.algorithm.adv_estimator).lower().split(".")[-1] == "exact"
         # Trajectory collection loop
