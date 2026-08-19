@@ -37,7 +37,7 @@ class WebshopWorker:
 
         env_kwargs['seed'] = seed
         self.env = WebAgentTextEnv(**env_kwargs)
-        self._exact_score_components = {}
+        self._exact_official_current_score = 0.0
     
     def step(self, action):
         """Execute a step in the environment"""
@@ -48,8 +48,10 @@ class WebshopWorker:
         info['task_score'] = reward
         if done:
             previous_state = self.env.server.user_sessions.get(previous_session, {})
-            self._exact_score_components = dict(previous_state.get('verbose_info', {}))
-            info['score_components'] = dict(self._exact_score_components)
+            info['score_components'] = dict(previous_state.get('verbose_info', {}))
+        self._exact_official_current_score = self.env.official_current_score(
+            info['available_actions']
+        )
 
         # Redefine reward. We only use rule-based reward - win for 10, lose for 0.
         if done and reward == 1.0:
@@ -67,13 +69,15 @@ class WebshopWorker:
         info = dict(info or {})
         info['available_actions'] = self.env.get_available_actions()
         info['won'] = False
-        self._exact_score_components = {}
+        self._exact_official_current_score = self.env.official_current_score(
+            info['available_actions']
+        )
         return obs, info
 
     def exact_credit_snapshot(self):
         from recipe.exact.env_probes import webshop_factor_snapshot
 
-        return webshop_factor_snapshot(self._exact_score_components)
+        return webshop_factor_snapshot(self._exact_official_current_score)
     
     def render(self, mode_for_render):
         """Render the environment"""

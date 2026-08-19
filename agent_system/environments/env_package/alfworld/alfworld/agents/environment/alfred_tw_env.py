@@ -253,6 +253,7 @@ class AlfredTWEnv:
             won=True,
             admissible_commands=True,
             facts=True,
+            intermediate_reward=True,
             extras=["gamefile"],
         )
         expert_type = self.config["env"]["expert_type"]

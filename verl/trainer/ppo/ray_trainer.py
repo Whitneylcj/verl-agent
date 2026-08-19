@@ -1231,7 +1231,7 @@ class RayPPOTrainer:
             run_observer = AgentRunObserver(
                 output_dir=monitor_config.output_dir,
                 conservation_tolerance=self.config.algorithm.exact.conservation_tolerance,
-                residual_warning_ratio=monitor_config.residual_warning_ratio,
+                opaque_target_warning_ratio=monitor_config.opaque_target_warning_ratio,
                 ppo_kl_warning=monitor_config.ppo_kl_warning,
                 clipfrac_warning=monitor_config.clipfrac_warning,
                 grad_norm_warning=monitor_config.grad_norm_warning,
@@ -1525,7 +1525,7 @@ class RayPPOTrainer:
                                 batch,
                                 exact_traces,
                                 max_steps=self.config.env.max_steps,
-                                residual_warning_ratio=monitor_config.residual_warning_ratio,
+                                opaque_target_warning_ratio=monitor_config.opaque_target_warning_ratio,
                                 tokenizer=self.tokenizer,
                             )
                             metrics.update(summarize_trajectory_diagnostics(trajectory_diagnostics))

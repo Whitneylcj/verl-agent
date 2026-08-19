@@ -35,7 +35,10 @@ _COMPARISON_METRICS = (
     "response_length/clip_ratio",
     "perf/throughput",
     "exact/conservation_error_max",
-    "exact/residual_ratio_mean",
+    "exact/closure_abs_mass_mean",
+    "exact/closure_abs_ratio_mean",
+    "exact/opaque_target_abs_ratio_mean",
+    "exact/closure_route_density_mean",
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
     "exact/resource_graph_span_rate",
@@ -73,11 +76,7 @@ def _override_map(values: Sequence[str]) -> dict[str, str]:
 def _stable_paths(manifest: Mapping[str, Any]) -> dict[str, Any]:
     """Exclude output locations that are expected to differ by run name."""
 
-    return {
-        key: value
-        for key, value in manifest.get("paths", {}).items()
-        if key not in _RUN_SPECIFIC_PATH_KEYS
-    }
+    return {key: value for key, value in manifest.get("paths", {}).items() if key not in _RUN_SPECIFIC_PATH_KEYS}
 
 
 def audit_run_fairness(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -85,7 +84,13 @@ def audit_run_fairness(manifests: Sequence[Mapping[str, Any]]) -> dict[str, Any]
 
     if len(manifests) < 2:
         raise ValueError("at least two run manifests are required")
-    identity_fields = ("environment", "model_path", "seed", "exact_mode")
+    identity_fields = (
+        "environment",
+        "model_path",
+        "seed",
+        "exact_mode",
+        "conservation_schema",
+    )
     identity_mismatches = {}
     for field in identity_fields:
         values = [manifest["experiment"].get(field) for manifest in manifests]

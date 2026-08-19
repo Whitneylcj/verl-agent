@@ -1,34 +1,31 @@
-import gym
 import json
 import random
 import string
 import time
-import torch
+from collections import defaultdict
 
+import gym
 import numpy as np
-
+import torch
 from bs4 import BeautifulSoup
 from bs4.element import Comment
-from collections import defaultdict
 from flask import Flask
+
 from web_agent_site.engine.engine import (
-    load_products,
-    init_search_engine,
+    ACTION_TO_TEMPLATE,
+    BACK_TO_SEARCH,
+    END_BUTTON,
+    NEXT_PAGE,
+    PREV_PAGE,
+    get_product_per_page,
     get_top_n_product_from_keywords,
+    init_search_engine,
+    load_products,
     map_action_to_html,
     parse_action,
-    get_product_per_page,
-    ACTION_TO_TEMPLATE,
-    END_BUTTON, NEXT_PAGE, PREV_PAGE, BACK_TO_SEARCH,
 )
-from web_agent_site.engine.goal import get_reward, get_goals
-from web_agent_site.utils import (
-    DEFAULT_FILE_PATH,
-    DEFAULT_ATTR_PATH,
-    FEAT_CONV,
-    FEAT_IDS,
-    random_idx
-)
+from web_agent_site.engine.goal import get_goals, get_reward
+from web_agent_site.utils import DEFAULT_ATTR_PATH, DEFAULT_FILE_PATH, FEAT_CONV, FEAT_IDS, random_idx
 
 app = Flask(__name__)
 class WebAgentTextEnv(gym.Env):
@@ -55,7 +52,7 @@ class WebAgentTextEnv(gym.Env):
         session_prefix
         show_attrs
         """
-        super(WebAgentTextEnv, self).__init__()
+        super().__init__()
         self.observation_mode = observation_mode
         self.kwargs = kwargs
 
@@ -159,6 +156,21 @@ class WebAgentTextEnv(gym.Env):
             has_search_bar=has_search_bar,
             clickables=list(self.text_to_clickable.keys()),
         )
+
+    def official_current_score(self, available_actions=None):
+        """Evaluate the current item with WebShop's official scorer."""
+        from recipe.exact.env_probes import compute_webshop_official_current_score
+
+        if available_actions is None:
+            available_actions = self.get_available_actions()
+        session = self.server.user_sessions[self.session]
+        return compute_webshop_official_current_score(
+            available_actions=available_actions,
+            session=session,
+            product_item_dict=self.server.product_item_dict,
+            product_prices=self.server.product_prices,
+            scorer=get_reward,
+        )
     
     def get_image(self):
         """Scrape image from page HTML and return as a list of pixel values"""
@@ -231,7 +243,8 @@ class WebAgentTextEnv(gym.Env):
             # Otherwise, return an observation with tags mapped to specific, unique separators
             observation = ''
             for t in visible_texts:
-                if t == '\n': continue
+                if t == '\n':
+                    continue
                 if t.parent.name == 'button':  # button
                     processed_t = f'[button] {t} [button_]'
                 elif t.parent.name == 'label':  # options

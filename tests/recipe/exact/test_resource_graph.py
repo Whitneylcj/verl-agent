@@ -22,11 +22,11 @@ def _route(span_id, step_id, writes, context=(), parents=()):
 
 def test_resource_graph_routes_direct_writes_and_propagates_context_control():
     atoms = (
-        CreditAtom("venmo-now", 1.0, 1, "venmo", ("model:venmo",)),
-        CreditAtom("spotify-now", 1.0, 1, "spotify", ("model:spotify",)),
-        CreditAtom("gmail-later", 1.0, 2, "gmail", ("model:gmail",)),
-        CreditAtom("unknown-later", 1.0, 2, "unknown", (UNKNOWN_RESOURCE,)),
-        CreditAtom("residual", 0.0, None, None, ("episode_return",), True),
+        CreditAtom("venmo-now", "delta", "venmo", 1.0, 1, ("model:venmo",)),
+        CreditAtom("spotify-now", "delta", "spotify", 1.0, 1, ("model:spotify",)),
+        CreditAtom("gmail-later", "delta", "gmail", 1.0, 2, ("model:gmail",)),
+        CreditAtom("unknown-later", "closure", "unknown", 1.0, 3, (UNKNOWN_RESOURCE,)),
+        CreditAtom("opaque_target", "opaque_target", None, 0.0, 3, ("episode_return",)),
     )
     routes = (
         _route("step1-arguments", 1, ("model:venmo", POLICY_CONTEXT_RESOURCE)),
@@ -40,13 +40,22 @@ def test_resource_graph_routes_direct_writes_and_propagates_context_control():
 
     first, second = compile_resource_graph_routes(routes, atoms)
     assert first.route_kind == "explicit"
-    assert first.descendant_atom_ids == ("venmo-now", "gmail-later", "unknown-later")
-    assert second.descendant_atom_ids == ("gmail-later", "unknown-later")
+    assert first.descendant_atom_ids == (
+        "venmo-now",
+        "gmail-later",
+        "unknown-later",
+        "opaque_target",
+    )
+    assert second.descendant_atom_ids == (
+        "gmail-later",
+        "unknown-later",
+        "opaque_target",
+    )
     assert "spotify-now" not in first.descendant_atom_ids
 
 
 def test_explicit_control_parent_must_precede_child():
-    atoms = (CreditAtom("a", 1.0, 1, "a", ("model:a",)),)
+    atoms = (CreditAtom("a", "delta", "a", 1.0, 1, ("model:a",)),)
     routes = (
         _route("child", 1, ("model:a",), parents=("parent",)),
         _route("parent", 1, ("model:a",)),
@@ -57,3 +66,23 @@ def test_explicit_control_parent_must_precede_child():
         assert "precede" in str(error)
     else:
         raise AssertionError("expected invalid control ordering to fail")
+
+
+def test_disjoint_channel_closures_only_route_to_matching_writes():
+    atoms = (
+        CreditAtom("delta-a", "delta", "a", 1.0, 1, ("model:a",)),
+        CreditAtom("closure-a", "closure", "a", -1.0, 2, ("model:a",)),
+        CreditAtom("closure-b", "closure", "b", 0.0, 2, ("model:b",)),
+        CreditAtom("opaque_target", "opaque_target", None, 0.0, 2, ("episode_return",)),
+    )
+
+    route_a, route_b = compile_resource_graph_routes(
+        (
+            _route("write-a", 1, ("model:a",)),
+            _route("write-b", 1, ("model:b",)),
+        ),
+        atoms,
+    )
+
+    assert route_a.descendant_atom_ids == ("delta-a", "closure-a", "opaque_target")
+    assert route_b.descendant_atom_ids == ("closure-b", "opaque_target")

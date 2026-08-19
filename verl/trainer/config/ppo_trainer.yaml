@@ -253,9 +253,9 @@ algorithm:
     enable_similarity: False # whether to use similarity-based anchor state grouping in GiGPO (supported for text-only tasks)
     similarity_thresh: 0.95 # similarity threshold for GiGPO (0.0, 1.0)
   exact:
+    conservation_schema: scoped_v2
     mode: graph # temporal / graph / graph_cv
     conservation_tolerance: 1.0e-8
-    force_residual_descendant: True
     potential:
       # Omit weights to use a fixed normalized sum of environment factors.
       scale: 1.0
@@ -274,9 +274,8 @@ algorithm:
       # estimator and its matched baselines.
       enabled: False
       output_dir: outputs/exact/${trainer.experiment_name}
-      # Paper stop-rule precursor: investigate sustained >0.8 together with
-      # credit/gradient variance before extending a temporal-only method.
-      residual_warning_ratio: 0.8
+      # Alert when most absolute credit mass remains in the opaque task target.
+      opaque_target_warning_ratio: 0.8
       rollout_sample_count: 8
       # Persist useful rollout context without leaking AppWorld supervisor PII
       # or accidentally copied credentials.

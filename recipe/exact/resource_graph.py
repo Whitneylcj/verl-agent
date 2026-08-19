@@ -29,6 +29,9 @@ def compile_resource_graph_routes(
     routes = tuple(routes)
     if not any(route.route_kind == "resource_graph" for route in routes):
         return routes
+    unknown_kinds = {atom.atom_kind for atom in atoms} - {"delta", "closure", "opaque_target"}
+    if unknown_kinds:
+        raise ValueError(f"unsupported atom kinds: {sorted(unknown_kinds)}")
     atom_ids = tuple(atom.atom_id for atom in atoms)
     atom_id_set = set(atom_ids)
     span_ids = [route.span.span_id for route in routes]
@@ -41,7 +44,7 @@ def compile_resource_graph_routes(
             descendants.append(set(atom_ids))
             continue
         if route.route_kind == "resource_graph":
-            descendants.append({atom.atom_id for atom in atoms if not atom.is_residual and atom.step_id is not None and atom.step_id >= route.span.step_id and resource_sets_overlap(route.span.possible_write_set, atom.read_set)})
+            descendants.append({atom.atom_id for atom in atoms if atom.atom_kind == "opaque_target" or (atom.atom_kind in {"delta", "closure"} and atom.step_id >= route.span.step_id and resource_sets_overlap(route.span.possible_write_set, atom.read_set))})
             continue
         unknown = set(route.descendant_atom_ids) - atom_id_set
         if unknown:

@@ -60,19 +60,36 @@ class ConservedAtoms:
     atoms: tuple[CreditAtom, ...]
     episode_return: float
     conservation_error: float
+    channel_target_masses: Mapping[str, float]
+    channel_conservation_errors: Mapping[str, float]
 
     @property
-    def residual(self) -> CreditAtom:
-        residuals = [atom for atom in self.atoms if atom.is_residual]
-        if len(residuals) != 1:
-            raise RuntimeError("a conserved atom set must contain exactly one residual")
-        return residuals[0]
+    def closure_atoms(self) -> tuple[CreditAtom, ...]:
+        return tuple(atom for atom in self.atoms if atom.atom_kind == "closure")
 
     @property
-    def residual_ratio(self) -> float:
-        residual_abs = abs(self.residual.value)
-        total_abs = sum(abs(atom.value) for atom in self.atoms)
-        return residual_abs / total_abs if total_abs > 0 else 0.0
+    def opaque_target_atom(self) -> CreditAtom:
+        atoms = [atom for atom in self.atoms if atom.atom_kind == "opaque_target"]
+        if len(atoms) != 1:
+            raise RuntimeError("a conserved atom set must contain exactly one opaque_target")
+        return atoms[0]
+
+    @property
+    def closure_abs_mass(self) -> float:
+        return float(sum(abs(atom.value) for atom in self.closure_atoms))
+
+    @property
+    def total_abs_mass(self) -> float:
+        return float(sum(abs(atom.value) for atom in self.atoms))
+
+    @property
+    def closure_abs_ratio(self) -> float:
+        return self.closure_abs_mass / self.total_abs_mass if self.total_abs_mass > 0 else 0.0
+
+    @property
+    def opaque_target_abs_ratio(self) -> float:
+        opaque_abs = abs(self.opaque_target_atom.value)
+        return opaque_abs / self.total_abs_mass if self.total_abs_mass > 0 else 0.0
 
 
 @dataclass(frozen=True)
@@ -93,6 +110,7 @@ class ExactCreditResult:
     span_credits: tuple[SpanCredit, ...]
     conserved_atoms: ConservedAtoms
     cone_density: float
+    closure_route_density: float
 
 
 def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnapshot, ...]:
@@ -102,6 +120,9 @@ def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnap
     factor_ids = snapshots[0].factor_ids
     schema_version = snapshots[0].schema_version
     potential_weights = snapshots[0].potential_weights
+    channel_roles = snapshots[0].channel_roles
+    read_sets = snapshots[0].read_sets
+    source_revision = snapshots[0].source_revision
     for expected_checkpoint, snapshot in enumerate(snapshots):
         if snapshot.checkpoint_id != expected_checkpoint:
             raise ValueError("checkpoint IDs must be contiguous and start at zero")
@@ -109,6 +130,12 @@ def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnap
             raise ValueError("factor IDs must remain stable within a trajectory")
         if snapshot.schema_version != schema_version:
             raise ValueError("factor schema version changed within a trajectory")
+        if snapshot.channel_roles != channel_roles:
+            raise ValueError("channel roles changed within a trajectory")
+        if snapshot.read_sets != read_sets:
+            raise ValueError("channel read sets changed within a trajectory")
+        if snapshot.source_revision != source_revision:
+            raise ValueError("verifier source revision changed within a trajectory")
         weights_changed = (potential_weights is None) != (snapshot.potential_weights is None)
         if potential_weights is not None and snapshot.potential_weights is not None:
             weights_changed = weights_changed or not np.array_equal(
@@ -120,48 +147,95 @@ def _validate_snapshots(snapshots: Sequence[FactorSnapshot]) -> tuple[FactorSnap
     return snapshots
 
 
-def build_conserved_atoms(
+def build_scoped_conserved_atoms(
     snapshots: Sequence[FactorSnapshot],
     episode_return: float,
     potential: IdentityPotential,
     tolerance: float = 1e-10,
 ) -> ConservedAtoms:
-    """Construct factor deltas and the terminal residual for one trajectory."""
+    """Construct channel deltas, local closures, and one opaque target.
+
+    Return-component channels close to their native weighted end-to-end change.
+    Process-verifier channels close to zero, so their shaping mass cannot alter
+    the episode target. Any target mass not represented by official return
+    components remains in the single opaque target atom.
+    """
 
     snapshots = _validate_snapshots(snapshots)
     if not np.isfinite(episode_return):
         raise ValueError("episode_return must be finite")
 
-    atoms = []
+    if potential.factor_ids != snapshots[0].factor_ids:
+        raise ValueError("potential factor_ids do not match snapshot channels")
+    has_return_components = any(role == "return_component" for role in snapshots[0].channel_roles.values())
+    if has_return_components:
+        native_weights = snapshots[0].potential_weights
+        if native_weights is None:
+            raise ValueError("return_component channels require native potential_weights")
+        if not np.array_equal(potential.weights, native_weights):
+            raise ValueError("return_component channels must use their exact native weights")
+
+    terminal_step_id = len(snapshots)
+    atoms: list[CreditAtom] = []
+    channel_delta_sums = {channel_id: 0.0 for channel_id in potential.factor_ids}
     for step_id, (before, after) in enumerate(zip(snapshots[:-1], snapshots[1:]), start=1):
         deltas = potential.factor_values(after) - potential.factor_values(before)
-        for factor_id, value in zip(before.factor_ids, deltas.tolist()):
-            if factor_id in after.read_sets:
-                read_set = after.read_sets[factor_id]
-            elif factor_id in before.read_sets:
-                read_set = before.read_sets[factor_id]
+        for channel_id, value in zip(before.factor_ids, deltas.tolist()):
+            if channel_id in after.read_sets:
+                read_set = after.read_sets[channel_id]
+            elif channel_id in before.read_sets:
+                read_set = before.read_sets[channel_id]
             else:
                 read_set = (UNKNOWN_RESOURCE,)
+            channel_delta_sums[channel_id] += float(value)
             atoms.append(
                 CreditAtom(
-                    atom_id=f"factor:{step_id}:{factor_id}",
+                    atom_id=f"delta:{step_id}:{channel_id}",
+                    atom_kind="delta",
+                    channel_id=channel_id,
                     value=float(value),
                     step_id=step_id,
-                    factor_id=factor_id,
                     read_set=tuple(read_set),
                 )
             )
 
-    residual_value = float(episode_return - potential(snapshots[-1]) + potential(snapshots[0]))
-    residual_read_set = sorted({resource for snapshot in snapshots for resources in snapshot.read_sets.values() for resource in resources} | {"episode_return"})
+    initial_values = potential.factor_values(snapshots[0])
+    final_values = potential.factor_values(snapshots[-1])
+    channel_target_masses: dict[str, float] = {}
+    channel_conservation_errors: dict[str, float] = {}
+    for channel_index, channel_id in enumerate(potential.factor_ids):
+        role = snapshots[0].channel_roles[channel_id]
+        target_mass = float(final_values[channel_index] - initial_values[channel_index]) if role == "return_component" else 0.0
+        closure_value = float(target_mass - channel_delta_sums[channel_id])
+        read_set = snapshots[-1].read_sets.get(
+            channel_id,
+            snapshots[0].read_sets.get(channel_id, (UNKNOWN_RESOURCE,)),
+        )
+        atoms.append(
+            CreditAtom(
+                atom_id=f"closure:{channel_id}",
+                atom_kind="closure",
+                channel_id=channel_id,
+                value=closure_value,
+                step_id=terminal_step_id,
+                read_set=tuple(read_set),
+            )
+        )
+        channel_target_masses[channel_id] = target_mass
+        channel_error = abs(channel_delta_sums[channel_id] + closure_value - target_mass)
+        channel_conservation_errors[channel_id] = float(channel_error)
+        if channel_error > tolerance:
+            raise AssertionError(f"channel conservation failed for {channel_id}: error={channel_error:.3e}, tolerance={tolerance:.3e}")
+
+    opaque_target_value = float(episode_return - sum(channel_target_masses.values()))
     atoms.append(
         CreditAtom(
-            atom_id="residual",
-            value=residual_value,
-            step_id=None,
-            factor_id=None,
-            read_set=tuple(residual_read_set),
-            is_residual=True,
+            atom_id="opaque_target",
+            atom_kind="opaque_target",
+            channel_id=None,
+            value=opaque_target_value,
+            step_id=terminal_step_id,
+            read_set=("episode_return",),
         )
     )
 
@@ -169,18 +243,24 @@ def build_conserved_atoms(
     error = abs(float(episode_return) - total)
     if error > tolerance:
         raise AssertionError(f"pathwise conservation failed: error={error:.3e}, tolerance={tolerance:.3e}")
-    return ConservedAtoms(atoms=tuple(atoms), episode_return=float(episode_return), conservation_error=error)
+    return ConservedAtoms(
+        atoms=tuple(atoms),
+        episode_return=float(episode_return),
+        conservation_error=error,
+        channel_target_masses=channel_target_masses,
+        channel_conservation_errors=channel_conservation_errors,
+    )
 
 
 def temporal_routes(routes: Sequence[SpanRoute], atoms: Sequence[CreditAtom]) -> tuple[SpanRoute, ...]:
     """Replace route atom sets with the conservative temporal future cone."""
 
-    residual_id = next(atom.atom_id for atom in atoms if atom.is_residual)
+    opaque_ids = [atom.atom_id for atom in atoms if atom.atom_kind == "opaque_target"]
+    if len(opaque_ids) != 1:
+        raise ValueError("temporal routing requires exactly one opaque_target")
     result = []
     for route in routes:
-        descendants = [atom.atom_id for atom in atoms if atom.is_residual or (atom.step_id is not None and atom.step_id >= route.span.step_id)]
-        if residual_id not in descendants:
-            descendants.append(residual_id)
+        descendants = [atom.atom_id for atom in atoms if atom.atom_kind == "opaque_target" or atom.step_id >= route.span.step_id]
         result.append(
             SpanRoute(
                 span=route.span,
@@ -197,7 +277,6 @@ def compute_exact_credits(
     routes: Sequence[SpanRoute],
     alpha_by_bucket: Mapping[str, float] | None = None,
     mode: str = "graph",
-    force_residual_descendant: bool = True,
 ) -> ExactCreditResult:
     """Route conserved atoms to policy spans without changing their values."""
 
@@ -211,12 +290,17 @@ def compute_exact_credits(
     atom_by_id = {atom.atom_id: atom for atom in atoms}
     if len(atom_by_id) != len(atoms):
         raise ValueError("atom IDs must be unique")
+    unknown_kinds = {atom.atom_kind for atom in atoms} - {"delta", "closure", "opaque_target"}
+    if unknown_kinds:
+        raise ValueError(f"unsupported atom kinds: {sorted(unknown_kinds)}")
     all_atom_ids = tuple(atom_by_id)
-    residual_id = conserved_atoms.residual.atom_id
+    opaque_target_id = conserved_atoms.opaque_target_atom.atom_id
+    closure_atom_ids = {atom.atom_id for atom in atoms if atom.atom_kind == "closure"}
     alpha_by_bucket = dict(alpha_by_bucket or {})
 
     span_credits = []
     descendant_pair_count = 0
+    closure_descendant_pair_count = 0
     for route in routes:
         if route.span.opaque or route.descendant_atom_ids is None:
             descendant_ids = set(all_atom_ids)
@@ -225,8 +309,7 @@ def compute_exact_credits(
             unknown = descendant_ids - set(all_atom_ids)
             if unknown:
                 raise ValueError(f"route {route.span.span_id} refers to unknown atoms: {sorted(unknown)}")
-            if force_residual_descendant:
-                descendant_ids.add(residual_id)
+            descendant_ids.add(opaque_target_id)
 
         descendant_ids_ordered = tuple(atom_id for atom_id in all_atom_ids if atom_id in descendant_ids)
         non_descendant_ids = tuple(atom_id for atom_id in all_atom_ids if atom_id not in descendant_ids)
@@ -237,6 +320,7 @@ def compute_exact_credits(
             raise ValueError(f"alpha for bucket {route.span.bucket} must be finite")
         credit = causal_return + alpha * control_return
         descendant_pair_count += len(descendant_ids_ordered)
+        closure_descendant_pair_count += len(closure_atom_ids & descendant_ids)
         span_credits.append(
             SpanCredit(
                 span_id=route.span.span_id,
@@ -253,10 +337,13 @@ def compute_exact_credits(
 
     denominator = len(routes) * len(atoms)
     cone_density = descendant_pair_count / denominator if denominator else 0.0
+    closure_denominator = len(routes) * len(closure_atom_ids)
+    closure_route_density = closure_descendant_pair_count / closure_denominator if closure_denominator else 0.0
     return ExactCreditResult(
         span_credits=tuple(span_credits),
         conserved_atoms=conserved_atoms,
         cone_density=float(cone_density),
+        closure_route_density=float(closure_route_density),
     )
 
 

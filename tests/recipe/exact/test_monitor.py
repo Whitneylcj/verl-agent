@@ -95,7 +95,7 @@ def _diagnostic_batch():
 def _metrics(conservation=0.0):
     return {
         "exact/conservation_error_max": conservation,
-        "exact/residual_ratio_mean": 0.2,
+        "exact/opaque_target_abs_ratio_mean": 0.2,
         "exact/schema_fallback_rate": 0.0,
         "exact/env_step_count": 3,
         "exact/generated_token_count": 11,
@@ -153,7 +153,7 @@ def test_observer_restores_budget_counters(tmp_path):
 def test_observer_safety_stops_on_nonfinite_metric(tmp_path):
     observer = ExactObserver(tmp_path)
     metrics = _metrics()
-    metrics["exact/residual_ratio_mean"] = float("nan")
+    metrics["exact/opaque_target_abs_ratio_mean"] = float("nan")
 
     try:
         observer.observe_credit(7, metrics, [], [])
@@ -170,8 +170,8 @@ def test_observer_safety_stops_on_nonfinite_metric(tmp_path):
 def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
     batch = _diagnostic_batch()
     traces = [
-        {"trajectory_id": "t1", "residual_ratio": 0.99},
-        {"trajectory_id": "t2", "residual_ratio": 0.1},
+        {"trajectory_id": "t1", "opaque_target_abs_ratio": 0.99},
+        {"trajectory_id": "t2", "opaque_target_abs_ratio": 0.1},
     ]
     diagnostics = build_trajectory_diagnostics(batch, traces, max_steps=2)
     by_id = {item["trajectory_id"]: item for item in diagnostics}
@@ -181,7 +181,7 @@ def test_trajectory_diagnostics_link_failure_signals_to_rollout_text():
         "max_steps",
         "no_factor_progress",
         "repeated_action",
-        "high_residual_ratio",
+        "high_opaque_target_ratio",
     }
     assert by_id["t2"]["termination"] == "success"
 
@@ -289,7 +289,7 @@ def test_baseline_diagnostics_do_not_invent_exact_factor_signals():
     by_id = {item["trajectory_id"]: item for item in diagnostics}
     assert by_id["t1"]["factor_probe_available"] is False
     assert "no_factor_progress" not in by_id["t1"]["diagnostic_tags"]
-    assert by_id["t1"]["residual_ratio"] is None
+    assert by_id["t1"]["opaque_target_abs_ratio"] is None
 
     metrics = summarize_trajectory_diagnostics(diagnostics)
     assert metrics["agent_diag/invalid_step_rate"] == 1 / 3

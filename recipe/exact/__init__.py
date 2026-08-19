@@ -5,7 +5,7 @@ from recipe.exact.core_exact import (
     DelayedAlphaController,
     ExactCreditResult,
     IdentityPotential,
-    build_conserved_atoms,
+    build_scoped_conserved_atoms,
     compute_exact_credits,
 )
 from recipe.exact.credit_spec import CreditAtom, EffectSpan, FactorSnapshot, SpanRoute
@@ -19,6 +19,6 @@ __all__ = [
     "FactorSnapshot",
     "IdentityPotential",
     "SpanRoute",
-    "build_conserved_atoms",
+    "build_scoped_conserved_atoms",
     "compute_exact_credits",
 ]

@@ -9,12 +9,21 @@ from agent_system.environments.env_package.alfworld.envs import AlfworldWorker
 class _FakeBatchEnv:
     def __init__(self):
         self.seed_calls = []
+        self.intermediate_rewards = []
 
     def seed(self, seed):
         self.seed_calls.append(seed)
 
     def reset(self):
-        return ["observation"], {"extra.gamefile": [None]}
+        return ["observation"], {
+            "extra.gamefile": [None],
+            "intermediate_reward": [0.0],
+        }
+
+    def step(self, actions):
+        assert actions == ["look"]
+        reward = self.intermediate_rewards.pop(0)
+        return ["observation"], [0.0], [False], {"intermediate_reward": [reward]}
 
 
 class _FakeBaseEnv:
@@ -50,23 +59,28 @@ def test_training_worker_advances_without_reseeding():
     assert batch_env.seed_calls == [17]
 
 
-def test_worker_remembers_target_discovery_after_leaving_observation():
-    worker, _ = _worker(deterministic_reset=False)
-    worker._exact_task_params = {
-        "task_type": "pick_heat_then_place_in_recep",
-        "object_target": "Mug",
-        "parent_target": "CoffeeMachine",
-    }
-    worker._exact_info = {
-        "observation_text": "The fridge is open. In it, you see a mug 1.",
-        "facts": [],
-    }
-    worker._refresh_exact_snapshot()
-    worker._exact_info = {
-        "observation_text": "You arrive at coffeemachine 1.",
-        "facts": [],
-    }
-    worker._refresh_exact_snapshot()
+def test_worker_accumulates_official_textworld_intermediate_reward():
+    worker, batch_env = _worker(deterministic_reset=False)
+    batch_env.intermediate_rewards = [1.0, 0.0, -1.0]
+    worker.reset()
 
-    factor_index = worker._exact_snapshot["factor_ids"].index("object_discovered")
-    assert worker._exact_snapshot["values"][factor_index] == 1.0
+    assert worker.exact_credit_snapshot()["values"] == (0.0,)
+    previous_value = worker.exact_credit_snapshot()["values"][0]
+    worker.step("look")
+    assert worker.exact_credit_snapshot()["values"] == (1.0,)
+    assert worker.exact_credit_snapshot()["values"][0] - previous_value == 1.0
+    worker.step("look")
+    assert worker.exact_credit_snapshot()["values"] == (1.0,)
+    worker.step("look")
+    assert worker.exact_credit_snapshot()["values"] == (0.0,)
+    worker.reset()
+    assert worker.exact_credit_snapshot()["values"] == (0.0,)
+
+
+def test_worker_fails_closed_on_invalid_intermediate_reward():
+    worker, batch_env = _worker(deterministic_reset=False)
+    batch_env.intermediate_rewards = [0.5]
+    worker.reset()
+
+    with pytest.raises(RuntimeError, match=r"\{-1, 0, 1\}"):
+        worker.step("look")

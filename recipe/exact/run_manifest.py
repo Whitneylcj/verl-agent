@@ -131,13 +131,23 @@ def build_manifest(
     """Build immutable launch evidence from the current checkout and runtime."""
 
     repo_root = repo_root.expanduser().resolve()
+    experiment = dict(experiment)
+    experiment.setdefault("conservation_schema", "scoped_v2")
     tracked_status = _command(("git", "status", "--porcelain", "--untracked-files=no"), cwd=repo_root)
     redacted_overrides = [redact_override(value) for value in overrides]
     override_digest = hashlib.sha256(json.dumps(redacted_overrides, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    from recipe.exact.env_probes import (
+        ALFWORLD_SOURCE_REVISION,
+        APPWORLD_SOURCE_REVISION,
+        GYM_SOKOBAN_SOURCE_REVISION,
+        TEXTWORLD_SOURCE_REVISION,
+        WEBSHOP_SOURCE_REVISION,
+    )
+
     manifest = {
         "schema_version": "exact.run_manifest.v1",
         "created_unix": time.time(),
-        "experiment": dict(experiment),
+        "experiment": experiment,
         "git": {
             "commit": _command(("git", "rev-parse", "HEAD"), cwd=repo_root),
             "branch": _command(("git", "branch", "--show-current"), cwd=repo_root),
@@ -151,11 +161,7 @@ def build_manifest(
             "python_version": platform.python_version(),
             "packages": _package_versions(),
             "gpus": _gpu_inventory() if include_hardware else [],
-            "environment": {
-                key: os.environ[key]
-                for key in ("VLLM_ATTENTION_BACKEND",)
-                if os.environ.get(key)
-            },
+            "environment": {key: os.environ[key] for key in ("VLLM_ATTENTION_BACKEND",) if os.environ.get(key)},
         },
         "paths": {
             key: os.environ.get(key)
@@ -180,6 +186,13 @@ def build_manifest(
             "toy_audit": _toy_audit_evidence(),
             "appworld_schema_audit": _appworld_schema_audit_evidence(),
             "appworld_real_probe": _appworld_probe_evidence(),
+        },
+        "official_verifier_sources": {
+            "sokoban": GYM_SOKOBAN_SOURCE_REVISION,
+            "alfworld": ALFWORLD_SOURCE_REVISION,
+            "textworld": TEXTWORLD_SOURCE_REVISION,
+            "webshop": WEBSHOP_SOURCE_REVISION,
+            "appworld": APPWORLD_SOURCE_REVISION,
         },
         "hydra_overrides": redacted_overrides,
         "hydra_overrides_sha256": override_digest,
@@ -220,6 +233,8 @@ def write_manifest(
             ("experiment", "name"),
             ("experiment", "environment"),
             ("experiment", "algorithm"),
+            ("experiment", "exact_mode"),
+            ("experiment", "conservation_schema"),
             ("experiment", "model_path"),
             ("experiment", "seed"),
         )
@@ -242,6 +257,7 @@ def main() -> int:
     parser.add_argument("--environment", required=True)
     parser.add_argument("--algorithm", required=True)
     parser.add_argument("--exact-mode", required=True)
+    parser.add_argument("--conservation-schema", default="scoped_v2")
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--loss-agg-mode", required=True)
@@ -254,6 +270,7 @@ def main() -> int:
         "environment": args.environment,
         "algorithm": args.algorithm,
         "exact_mode": args.exact_mode,
+        "conservation_schema": args.conservation_schema,
         "model_path": args.model_path,
         "seed": args.seed,
         "loss_agg_mode": args.loss_agg_mode,

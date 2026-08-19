@@ -9,8 +9,10 @@ the update instead of silently falling back to a biased estimator.
 
 1. Each environment manager records a verifier-only factor snapshot before and
    after every action. These values are never added to the model prompt.
-2. `build_conserved_atoms` constructs factor-potential deltas and one terminal
-   residual whose pathwise sum is exactly the episode return.
+2. `build_scoped_conserved_atoms` constructs weighted channel deltas, one local
+   closure per channel, and one opaque target remainder. Return-component
+   channels close to their native end-to-end reward mass; process-verifier
+   channels close to zero. Their pathwise sum is exactly the episode return.
 3. A prefix-predictable effect schema routes future atoms to response spans.
    Sokoban, ALFWorld, and WebShop conservatively retain all future factors
    because observation history can mediate later policy actions. AppWorld uses
@@ -28,25 +30,39 @@ the update instead of silently falling back to a biased estimator.
 The hard graph estimator is unbiased when its route is conservative. PPO ratio
 clipping, KL regularization, and repeated optimizer steps are practical training
 choices and are reported separately from the raw on-policy identity.
-Programmatic 0–1 factors use the normalized potential scale `1.0` by default;
-set `POTENTIAL_SCALE` only as a declared ablation, never as an implicit tuning
-change between matched runs. Environments may instead provide fixed intrinsic
-weights when their official reward decomposition defines the factor scale.
+Programmatic process-verifier channels use their environment-declared fixed
+weights. Official return-component channels must use their native weights with
+potential scale `1.0`; the active estimator rejects a custom scale or weight
+override instead of silently changing the reward identity.
 
 The Sokoban verifier uses only gym-sokoban's official reward events: one step
 penalty, a box pushed onto a target, a box pushed off a target, and all boxes on
 targets. Their cumulative event counts carry the package's native weights
 `-0.1`, `+1`, `-1`, and `+10`. Every checkpoint delta is checked against the
 observed environment reward; no distance, deadlock, or other heuristic shaping
-factor is part of the default schema.
+factor is part of the default schema. The adapter is source-locked to
+`mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89`.
 
-The ALFWorld snapshot records persistent, observation-derived target discovery,
-whether the inventory is free of a wrong object, target acquisition, required
-state changes such as heating or cleaning, placement, and terminal success.
-Discovery is triggered only by the scene or current admissible commands; the
-target repeated in the task description does not count. These factors use
-already returned observations and facts, never an expert plan or an extra
-environment query.
+The ALFWorld snapshot contains exactly one process channel: the cumulative
+official TextWorld `intermediate_reward`. The environment requests
+`EnvInfos(intermediate_reward=True)`, requires reset value zero, accepts only
+the native `-1/0/+1` step values, and never parses observations or facts into
+heuristic subgoals. The locked sources are
+`alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e` and
+`microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2`.
+
+WebShop uses one process channel produced by its own `get_reward` scorer on the
+current item state, matching the official `WebEnv.score` gate that scoring is
+available on the description page. Terminal task reward remains a separate raw
+diagnostic and is not reverse-engineered into heuristic components. The locked
+source is `princeton-nlp/WebShop@64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd`.
+
+AppWorld accepts only the full `TestTracker.to_dict(stats_only=False)` schema:
+top-level passes, failures, num_tests, and success with exhaustive, unique,
+non-empty requirement entries. Each requirement is a process channel with a
+fixed normalized weight; malformed or inconsistent tracker output fails
+closed. The locked source is
+`StonyBrookNLP/appworld@a072b7a86e7c1d5b1d7175659d750ebb9b79f10a`.
 
 ## Validation order
 
@@ -236,8 +252,9 @@ common agentic artifacts under `outputs/.../monitor/`:
 - `alerts.jsonl`: only steps that cross configurable PPO KL, clip fraction,
   gradient norm, response clipping, invalid-action, or EXACT warning thresholds.
 
-EXACT additionally writes `credit_traces.jsonl.gz` with atoms, routes,
-residuals, span credits, factor progress, and conservation health. Baselines do
+EXACT additionally writes `credit_traces.jsonl.gz` with channel roles and
+targets, delta/closure/opaque-target atoms, routes, span credits, progress, and
+per-channel plus total conservation health. Baselines do
 not fabricate unavailable factor or causal-credit signals.
 
 Persisted rollout text is size-bounded and redacts common credentials, email
@@ -256,8 +273,10 @@ throughput, and validation metrics. AppWorld splits invalid steps into JSON
 syntax/projection failures and executed API/argument failures for both training
 and validation; do not diagnose the parser from the combined rate alone. For
 EXACT also track
-`exact/conservation_error_max`, `exact/residual_ratio_mean`,
-`exact/cone_density_mean`, `exact/schema_fallback_rate`, credit quantiles,
+`exact/conservation_error_max`, `exact/closure_abs_mass_mean`,
+`exact/closure_abs_ratio_mean`, `exact/opaque_target_abs_ratio_mean`,
+`exact/closure_route_density_mean`, `exact/cone_density_mean`,
+`exact/schema_fallback_rate`, credit quantiles,
 factor-progress rates, verifier snapshot cost, and active GPU-hours. AppWorld
 also reports resource-graph span coverage, argument-span resolution, opaque
 factor-read rate, schema-version support, and evaluator-compile fallback. Before

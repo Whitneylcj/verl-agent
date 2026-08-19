@@ -12,7 +12,7 @@ import torch
 from recipe.exact.core_exact import (
     DelayedAlphaController,
     IdentityPotential,
-    build_conserved_atoms,
+    build_scoped_conserved_atoms,
     compute_exact_credits,
 )
 from recipe.exact.credit_spec import EffectSpan, FactorSnapshot, SpanRoute
@@ -47,6 +47,8 @@ def _snapshot_from_record(record: Any, checkpoint_id: int) -> FactorSnapshot:
         potential_weights=(None if record.get("potential_weights") is None else np.asarray(record["potential_weights"], dtype=np.float64)),
         read_sets={key: tuple(value) for key, value in record.get("read_sets", {}).items()},
         schema_version=str(record.get("schema_version", "exact.credit.v1")),
+        channel_roles={key: str(value) for key, value in record["channel_roles"].items()},
+        source_revision=(None if record.get("source_revision") is None else str(record["source_revision"])),
     )
 
 
@@ -54,8 +56,11 @@ def _make_potential(snapshot: FactorSnapshot, config: Any) -> IdentityPotential:
     factor_ids = snapshot.factor_ids
     potential_config = _config_get(config, "potential", {})
     weights_config = _config_get(potential_config, "weights", None)
+    scale = float(_config_get(potential_config, "scale", 1.0))
+    has_return_components = any(role == "return_component" for role in snapshot.channel_roles.values())
+    if has_return_components and scale != 1.0:
+        raise ValueError("return_component channels require potential.scale=1.0")
     if weights_config is None:
-        scale = float(_config_get(potential_config, "scale", 1.0))
         if snapshot.potential_weights is not None:
             return IdentityPotential(factor_ids, scale * snapshot.potential_weights)
         return IdentityPotential.normalized(factor_ids, scale=scale)
@@ -67,7 +72,11 @@ def _make_potential(snapshot: FactorSnapshot, config: Any) -> IdentityPotential:
         weights = np.asarray([weights_config[factor_id] for factor_id in factor_ids], dtype=np.float64)
     else:
         weights = np.asarray(weights_config, dtype=np.float64)
-    return IdentityPotential(tuple(factor_ids), weights)
+    potential = IdentityPotential(tuple(factor_ids), weights)
+    if has_return_components:
+        if snapshot.potential_weights is None or not np.array_equal(weights, snapshot.potential_weights):
+            raise ValueError("return_component channels require their exact native weights")
+    return potential
 
 
 def _trajectory_snapshots(rows: Sequence[int], data: Any) -> tuple[FactorSnapshot, ...]:
@@ -86,7 +95,8 @@ def _trajectory_snapshots(rows: Sequence[int], data: Any) -> tuple[FactorSnapsho
                 recorded_pre.potential_weights,
                 previous.potential_weights,
             )
-        if recorded_pre.factor_ids != previous.factor_ids or not np.allclose(recorded_pre.values, previous.values, rtol=0.0, atol=1e-10) or not weights_match:
+        metadata_match = recorded_pre.factor_ids == previous.factor_ids and recorded_pre.channel_roles == previous.channel_roles and recorded_pre.read_sets == previous.read_sets and recorded_pre.schema_version == previous.schema_version and recorded_pre.source_revision == previous.source_revision
+        if not metadata_match or not np.allclose(recorded_pre.values, previous.values, rtol=0.0, atol=1e-10) or not weights_match:
             raise ValueError(f"factor checkpoint discontinuity before trajectory step {position}")
         snapshots.append(_snapshot_from_record(data.non_tensor_batch["exact_factor_post"][row], position))
     return tuple(snapshots)
@@ -151,7 +161,7 @@ def _compile_row_routes(
             descendant_ids = ()
         else:
             factor_ids = tuple(str(value) for value in record["descendant_factor_ids"])
-            descendant_ids = tuple(atom.atom_id for atom in atoms if not atom.is_residual and atom.step_id is not None and atom.step_id >= step_id and atom.factor_id in factor_ids)
+            descendant_ids = tuple(atom.atom_id for atom in atoms if atom.atom_kind in {"delta", "closure"} and atom.step_id >= step_id and atom.channel_id in factor_ids)
         span = EffectSpan(
             span_id=span_id_map[base_span_ids[span_position]],
             step_id=step_id,
@@ -232,16 +242,21 @@ def compute_exact_advantage(
     exact_response_mask = base_response_mask.clone().to(dtype=torch.float32)
     exact_response_mask[torch.as_tensor(exact_padding, device=exact_response_mask.device)] = 0
     trajectory_scale = batch_size / len(trajectory_rows)
+    conservation_schema = str(_config_get(config, "conservation_schema", "scoped_v2"))
+    if conservation_schema != "scoped_v2":
+        raise ValueError(f"unsupported EXACT conservation schema: {conservation_schema}")
     mode = str(_config_get(config, "mode", "graph"))
-    force_residual = bool(_config_get(config, "force_residual_descendant", True))
     if alpha_by_bucket is None:
         alpha_by_bucket = dict(_config_get(config, "alpha_by_bucket", {}) or {})
     else:
         alpha_by_bucket = dict(alpha_by_bucket)
 
     conservation_errors: list[float] = []
-    residual_ratios: list[float] = []
+    closure_abs_masses: list[float] = []
+    closure_abs_ratios: list[float] = []
+    opaque_target_abs_ratios: list[float] = []
     cone_densities: list[float] = []
+    closure_route_densities: list[float] = []
     raw_credits: list[float] = []
     fallback_count = 0
     span_count = 0
@@ -262,13 +277,19 @@ def compute_exact_advantage(
         snapshots = _trajectory_snapshots(rows, data)
         potential = _make_potential(snapshots[0], config)
         episode_return = _trajectory_return(rows, data)
-        conserved = build_conserved_atoms(
+        conserved = build_scoped_conserved_atoms(
             snapshots,
             episode_return=episode_return,
             potential=potential,
             tolerance=float(_config_get(config, "conservation_tolerance", 1e-8)),
         )
-        trajectory_factor_atoms = [atom for atom in conserved.atoms if not atom.is_residual]
+        if snapshots[0].schema_version == "exact.sokoban.official_reward.v1":
+            tolerance = float(_config_get(config, "conservation_tolerance", 1e-8))
+            if conserved.closure_abs_mass > tolerance:
+                raise AssertionError("Sokoban official return-component closures must be zero")
+            if abs(conserved.opaque_target_atom.value) > tolerance:
+                raise AssertionError("Sokoban official reward events do not reconstruct the episode return")
+        trajectory_factor_atoms = [atom for atom in conserved.atoms if atom.atom_kind == "delta"]
         factor_atom_count += len(trajectory_factor_atoms)
         changed_factor_atom_count += sum(abs(atom.value) > 1e-12 for atom in trajectory_factor_atoms)
         unknown_read_atom_count += sum("exact.resource.unknown" in atom.read_set for atom in trajectory_factor_atoms)
@@ -307,7 +328,6 @@ def compute_exact_advantage(
             routes,
             alpha_by_bucket=alpha_by_bucket,
             mode=mode,
-            force_residual_descendant=force_residual,
         )
         graph_compile_seconds += time.perf_counter() - graph_started
         for placement, span_credit in zip(placements, result.span_credits):
@@ -316,15 +336,36 @@ def compute_exact_advantage(
             raw_credits.append(span_credit.credit)
 
         conservation_errors.append(conserved.conservation_error)
-        residual_ratios.append(conserved.residual_ratio)
+        closure_abs_masses.append(conserved.closure_abs_mass)
+        closure_abs_ratios.append(conserved.closure_abs_ratio)
+        opaque_target_abs_ratios.append(conserved.opaque_target_abs_ratio)
         cone_densities.append(result.cone_density)
+        closure_route_densities.append(result.closure_route_density)
+        channel_identities = {}
+        for channel_id, target_mass in conserved.channel_target_masses.items():
+            delta_sum = sum(atom.value for atom in conserved.atoms if atom.atom_kind == "delta" and atom.channel_id == channel_id)
+            closure_value = next(atom.value for atom in conserved.closure_atoms if atom.channel_id == channel_id)
+            channel_identities[channel_id] = {
+                "delta_sum": float(delta_sum),
+                "closure": float(closure_value),
+                "target_mass": float(target_mass),
+                "conservation_error": conserved.channel_conservation_errors[channel_id],
+            }
         traces.append(
             {
                 "trajectory_id": trajectory_id,
                 "episode_return": episode_return,
+                "atom_sum": float(sum(atom.value for atom in conserved.atoms)),
                 "conservation_error": conserved.conservation_error,
-                "residual_ratio": conserved.residual_ratio,
+                "channel_roles": dict(snapshots[0].channel_roles),
+                "channel_target_masses": dict(conserved.channel_target_masses),
+                "channel_conservation_errors": dict(conserved.channel_conservation_errors),
+                "channel_identities": channel_identities,
+                "closure_abs_mass": conserved.closure_abs_mass,
+                "closure_abs_ratio": conserved.closure_abs_ratio,
+                "opaque_target_abs_ratio": conserved.opaque_target_abs_ratio,
                 "cone_density": result.cone_density,
+                "closure_route_density": result.closure_route_density,
                 "atoms": [asdict(atom) for atom in conserved.atoms],
                 "spans": [asdict(span_credit) for span_credit in result.span_credits],
             }
@@ -355,7 +396,10 @@ def compute_exact_advantage(
         probe_count = float(probe_counts[~exact_padding].sum())
     metrics = {
         "exact/conservation_error_max": float(max(conservation_errors, default=0.0)),
-        "exact/residual_ratio_mean": float(np.mean(residual_ratios)),
+        "exact/closure_abs_mass_mean": float(np.mean(closure_abs_masses)),
+        "exact/closure_abs_ratio_mean": float(np.mean(closure_abs_ratios)),
+        "exact/opaque_target_abs_ratio_mean": float(np.mean(opaque_target_abs_ratios)),
+        "exact/closure_route_density_mean": float(np.mean(closure_route_densities)),
         "exact/cone_density_mean": float(np.mean(cone_densities)),
         "exact/schema_fallback_rate": float(fallback_count / max(span_count, 1)),
         "exact/credit_mean": float(np.mean(credit_array)),
@@ -375,6 +419,7 @@ def compute_exact_advantage(
         "exact/probe_seconds_per_snapshot": probe_seconds / probe_count if probe_count > 0 else 0.0,
         "exact/graph_compile_seconds": float(graph_compile_seconds),
         "exact/pathwise_conservation_pass": 1.0,
+        "exact/conservation_schema_scoped_v2": 1.0,
     }
     if appworld_row_count:
         metrics.update(

@@ -26,6 +26,7 @@ def test_manifest_records_commit_overrides_and_rejects_mixed_resume(tmp_path):
     )
     assert len(manifest["git"]["commit"]) == 40
     assert manifest["hydra_overrides"][1] == "service.password=[REDACTED]"
+    assert manifest["official_verifier_sources"]["sokoban"].endswith("8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89")
 
     manifest_path = write_manifest(tmp_path / "run", manifest, require_clean=False)
     assert manifest_path.is_file()

@@ -82,6 +82,7 @@ validation_file="${prepared_data_root}/text/test.parquet"
 
 common_overrides=(
   "algorithm.adv_estimator=${algorithm_name}"
+  "algorithm.exact.conservation_schema=scoped_v2"
   "algorithm.exact.mode=${exact_mode}"
   "algorithm.exact.potential.scale=${potential_scale}"
   "data.train_files=${train_file}"
@@ -214,6 +215,7 @@ manifest_args=(
   --environment "${environment_name}"
   --algorithm "${algorithm_name}"
   --exact-mode "${exact_mode}"
+  --conservation-schema scoped_v2
   --model-path "${model_path}"
   --seed "${seed}"
   --loss-agg-mode "${loss_agg_mode}"

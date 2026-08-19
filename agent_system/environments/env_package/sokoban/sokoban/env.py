@@ -88,16 +88,10 @@ class SokobanEnv(BaseDiscreteActionEnv, GymSokobanEnv):
         # assert not self.success()
 
         previous_boxes_on_target = int(self.boxes_on_target)
-        if action == self.INVALID_ACTION:
-            reward = float(self.penalty_for_step)
-            self._record_exact_reward_events(
-                previous_boxes_on_target=previous_boxes_on_target,
-                current_boxes_on_target=previous_boxes_on_target,
-                completed=False,
-                observed_reward=reward,
-            )
-            return self.render(self.mode), reward, False, {"action_is_effective": False, "won": False}
-        prev_player_position = self.player_position
+        # gym-sokoban defines action 0 as a no-op transition.  It must still go
+        # through the official step path so that the environment clock, reward
+        # bookkeeping, and max-step termination stay aligned with valid moves.
+        prev_player_position = self.player_position.copy()
         _, reward, done, _ = GymSokobanEnv.step(self, action, observation_mode=self.mode)
         self._record_exact_reward_events(
             previous_boxes_on_target=previous_boxes_on_target,

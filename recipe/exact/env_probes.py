@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
+
+GYM_SOKOBAN_SOURCE_REVISION = "mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89"
+ALFWORLD_SOURCE_REVISION = "alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e"
+TEXTWORLD_SOURCE_REVISION = "microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2"
+WEBSHOP_SOURCE_REVISION = "princeton-nlp/WebShop@64fa2a5c15c7daa698b9ac93f5bb5437b634c9bd"
+APPWORLD_SOURCE_REVISION = "StonyBrookNLP/appworld@a072b7a86e7c1d5b1d7175659d750ebb9b79f10a"
 
 
 def _snapshot(
@@ -14,7 +18,9 @@ def _snapshot(
     values: Sequence[float],
     read_sets: Mapping[str, Sequence[str]],
     schema_version: str,
+    channel_roles: Mapping[str, str],
     potential_weights: Sequence[float] | None = None,
+    source_revision: str | None = None,
 ) -> dict[str, Any]:
     if len(factor_ids) != len(values):
         raise ValueError("factor IDs and values must be aligned")
@@ -26,7 +32,12 @@ def _snapshot(
         "values": tuple(values_array.tolist()),
         "read_sets": {key: tuple(value) for key, value in read_sets.items()},
         "schema_version": schema_version,
+        "channel_roles": dict(channel_roles),
     }
+    if set(channel_roles) != set(factor_ids):
+        raise ValueError("probe channel_roles must exactly match factor IDs")
+    if source_revision is not None:
+        snapshot["source_revision"] = source_revision
     if potential_weights is not None:
         weights_array = np.asarray(potential_weights, dtype=np.float64)
         if weights_array.shape != values_array.shape or not np.all(np.isfinite(weights_array)):
@@ -86,203 +97,133 @@ def sokoban_factor_snapshot(
         counts,
         read_sets,
         "exact.sokoban.official_reward.v1",
+        channel_roles={factor_id: "return_component" for factor_id in SOKOBAN_REWARD_FACTOR_IDS},
         potential_weights=weights,
+        source_revision=GYM_SOKOBAN_SOURCE_REVISION,
     )
 
 
-def _normalize_alfworld_entity(value: Any) -> str:
-    return " ".join(str(value).lower().split())
+def alfworld_factor_snapshot(cumulative_intermediate_reward: Any) -> dict[str, Any]:
+    """Expose TextWorld's official cumulative intermediate reward."""
+
+    value = float(cumulative_intermediate_reward)
+    if not np.isfinite(value):
+        raise ValueError("ALFWorld cumulative intermediate reward must be finite")
+    channel_id = "textworld_intermediate_reward_cumulative"
+    return _snapshot(
+        (channel_id,),
+        (value,),
+        {channel_id: ("alfworld.textworld.quest_progression",)},
+        "exact.alfworld.textworld.intermediate_reward.v1",
+        channel_roles={channel_id: "process_verifier"},
+        potential_weights=(1.0,),
+        source_revision=f"{ALFWORLD_SOURCE_REVISION};{TEXTWORLD_SOURCE_REVISION}",
+    )
 
 
-def _alfworld_facts(raw_facts: Any) -> list[tuple[str, tuple[str, ...]]]:
-    result = []
-    for fact in raw_facts or ():
-        if hasattr(fact, "name") and hasattr(fact, "arguments"):
-            name = str(fact.name).lower()
-            arguments = tuple(_normalize_alfworld_entity(getattr(argument, "name", argument)) for argument in fact.arguments)
-        elif isinstance(fact, Mapping):
-            name = str(fact["name"]).lower()
-            raw_arguments = fact.get("arguments", fact.get("names", ()))
-            arguments = tuple(_normalize_alfworld_entity(argument) for argument in raw_arguments)
-        elif isinstance(fact, str):
-            pieces = fact.split()
-            name = pieces[0].lower()
-            arguments = tuple(_normalize_alfworld_entity(piece) for piece in pieces[1:])
-        else:
-            continue
-        result.append((name, arguments))
-    return result
+def webshop_factor_snapshot(official_current_score: Any) -> dict[str, Any]:
+    """Expose WebShop's official current-state score as one process channel."""
+
+    value = float(official_current_score)
+    if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise ValueError("WebShop official current score must be finite and in [0, 1]")
+    channel_id = "webshop_official_current_score"
+    return _snapshot(
+        (channel_id,),
+        (value,),
+        {
+            channel_id: (
+                "webshop.session.asin",
+                "webshop.session.options",
+                "webshop.session.goal",
+                "webshop.product.price",
+                "webshop.product.catalog_fields_used_by_official_scorer",
+            )
+        },
+        "exact.webshop.official_current_score.v1",
+        channel_roles={channel_id: "process_verifier"},
+        potential_weights=(1.0,),
+        source_revision=WEBSHOP_SOURCE_REVISION,
+    )
 
 
-def alfworld_target_is_visible(
-    info: Mapping[str, Any],
-    task_params: Mapping[str, Any],
-) -> bool:
-    """Return whether the current observation exposes the task object."""
+def compute_webshop_official_current_score(
+    *,
+    available_actions: Mapping[str, Any],
+    session: Mapping[str, Any],
+    product_item_dict: Mapping[str, Any],
+    product_prices: Mapping[str, Any],
+    scorer: Callable[..., Any],
+) -> float:
+    """Apply WebShop's official current-state score gate and scorer."""
 
-    object_target = _normalize_alfworld_entity(task_params.get("object_target", ""))
-    if not object_target:
-        return False
-    observation = info.get("observation_text", "")
-    if isinstance(observation, (list, tuple, np.ndarray)):
-        observation = observation[0] if len(observation) else ""
-    # The reset introduction repeats the target in the task description.  Only
-    # inspect the scene portion so that this does not count as discovery.
-    scene = _normalize_alfworld_entity(observation).split("your task is to:", 1)[0]
-    target_pattern = rf"(?<!\w){re.escape(object_target)}(?: \d+)?(?!\w)"
-    if re.search(target_pattern, scene):
-        return True
-
-    commands = info.get("admissible_commands", ())
-    if isinstance(commands, str):
-        commands = (commands,)
-    command_pattern = re.compile(rf"^(?:take|examine) {re.escape(object_target)}(?: \d+)?(?: |$)")
-    return any(command_pattern.search(_normalize_alfworld_entity(command)) for command in commands)
-
-
-def alfworld_factor_snapshot(
-    info: Mapping[str, Any],
-    task_params: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Compile stable, verifier-only ALFWorld task progress factors."""
-
-    if not task_params:
-        won = float(bool(info.get("won", False)))
-        return _snapshot(
-            ("goal_satisfied",),
-            (won,),
-            {"goal_satisfied": ("alfworld.world_state", "alfworld.goal")},
-            "exact.alfworld.goal.v1",
+    clickables = available_actions.get("clickables")
+    if not isinstance(clickables, (list, tuple)):
+        raise TypeError("WebShop available_actions.clickables must be a list")
+    if "description" not in clickables:
+        return 0.0
+    asin = session.get("asin")
+    if not asin:
+        return 0.0
+    score = float(
+        scorer(
+            product_item_dict[asin],
+            session["goal"],
+            price=product_prices.get(asin),
+            options=session["options"],
         )
-
-    task_type = str(task_params["task_type"]).lower()
-    object_target = _normalize_alfworld_entity(task_params.get("object_target", ""))
-    parent_target = _normalize_alfworld_entity(task_params.get("parent_target", ""))
-    toggle_target = _normalize_alfworld_entity(task_params.get("toggle_target", ""))
-    facts = _alfworld_facts(info.get("facts", ()))
-
-    def has_fact(predicate: str, *entities: str) -> bool:
-        for name, arguments in facts:
-            if name != predicate:
-                continue
-            if all(any(entity and entity in argument for argument in arguments) for entity in entities):
-                return True
-        return False
-
-    held_objects = [arguments[-1] for name, arguments in facts if name == "holds" and arguments]
-    holds_wrong_object = any(object_target not in held_object for held_object in held_objects)
-    object_discovered = bool(info.get("exact.object_discovered", False)) or alfworld_target_is_visible(
-        info,
-        task_params,
     )
-    values_by_id: dict[str, float] = {
-        "object_discovered": float(object_discovered),
-        "inventory_target_compatible": float(not holds_wrong_object),
-        "object_acquired": float(has_fact("holds", object_target)),
-    }
-    if "clean" in task_type:
-        values_by_id["object_cleaned"] = float(has_fact("isclean", object_target))
-    if "heat" in task_type:
-        values_by_id["object_heated"] = float(has_fact("ishot", object_target))
-    if "cool" in task_type:
-        values_by_id["object_cooled"] = float(has_fact("iscool", object_target))
-    if "look_at" in task_type:
-        values_by_id["light_toggled"] = float(has_fact("istoggled", toggle_target) or has_fact("ison", toggle_target))
-    else:
-        placed_objects = {arguments[0] for name, arguments in facts if name in {"inreceptacle", "inreceptacleobject"} and len(arguments) >= 2 and object_target in arguments[0] and parent_target in arguments[1]}
-        values_by_id["object_placed_1"] = float(len(placed_objects) >= 1)
-        if "pick_two" in task_type:
-            values_by_id["object_placed_2"] = float(len(placed_objects) >= 2)
-    values_by_id["goal_satisfied"] = float(bool(info.get("won", False)))
-
-    read_sets = {factor_id: ("alfworld.world_facts", "alfworld.task_parameters") for factor_id in values_by_id}
-    read_sets["object_discovered"] = (
-        "alfworld.observation_history",
-        "alfworld.task_parameters",
-    )
-    return _snapshot(
-        tuple(values_by_id),
-        tuple(values_by_id.values()),
-        read_sets,
-        f"exact.alfworld.{task_type}.v2",
-    )
-
-
-def webshop_factor_snapshot(score_components: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Expose the four components produced by WebShop's terminal scorer."""
-
-    score_components = score_components or {}
-    component_keys = ("r_type", "r_att", "r_option", "r_price")
-    values = []
-    for key in component_keys:
-        value = score_components.get(key, 0.0)
-        values.append(0.0 if value is None else float(value))
-    read_sets = {
-        "type_match": ("webshop.selected_product", "webshop.goal.type"),
-        "attribute_match": ("webshop.selected_product", "webshop.goal.attributes"),
-        "option_match": ("webshop.selected_options", "webshop.goal.options"),
-        "price_match": ("webshop.selected_product", "webshop.goal.price"),
-    }
-    return _snapshot(
-        ("type_match", "attribute_match", "option_match", "price_match"),
-        values,
-        read_sets,
-        "exact.webshop.scorer.v1",
-    )
-
-
-def flatten_boolean_leaves(value: Any, prefix: str = "evaluation") -> dict[str, float]:
-    """Flatten deterministic boolean test results from an AppWorld evaluation."""
-
-    leaves: dict[str, float] = {}
-    if isinstance(value, (bool, np.bool_)):
-        leaves[prefix] = float(value)
-    elif isinstance(value, Mapping):
-        for key in sorted(value, key=str):
-            child_prefix = f"{prefix}.{key}"
-            leaves.update(flatten_boolean_leaves(value[key], child_prefix))
-    elif isinstance(value, (list, tuple)):
-        for index, item in enumerate(value):
-            leaves.update(flatten_boolean_leaves(item, f"{prefix}.{index}"))
-    return leaves
+    if not np.isfinite(score) or not 0.0 <= score <= 1.0:
+        raise ValueError("WebShop official scorer returned a value outside [0, 1]")
+    return score
 
 
 def _appworld_requirement(entry: Any) -> str:
-    if isinstance(entry, Mapping):
-        for key in ("requirement", "name", "description"):
-            if key in entry:
-                return str(entry[key]).strip()
-        stable_entry = {str(key): value for key, value in entry.items() if str(key).lower() not in {"error", "traceback", "stacktrace"}}
-        return json.dumps(stable_entry, ensure_ascii=False, sort_keys=True, default=str)
-    return str(entry).strip()
+    if not isinstance(entry, Mapping) or "requirement" not in entry:
+        raise TypeError("AppWorld pass/failure entries must carry a requirement field")
+    requirement = str(entry["requirement"]).strip()
+    if not requirement:
+        raise ValueError("AppWorld evaluation contains an empty requirement")
+    return requirement
 
 
 def _appworld_test_outcomes(evaluation: Mapping[str, Any]) -> dict[str, float]:
     from recipe.exact.appworld_schema import appworld_factor_id
 
-    for container in (evaluation, *[value for value in evaluation.values() if isinstance(value, Mapping)]):
-        if "passes" not in container or "failures" not in container:
-            continue
-        outcomes: dict[str, float] = {}
-        requirements: dict[str, str] = {}
-        for value, key in ((1.0, "passes"), (0.0, "failures")):
-            entries = container[key]
-            if not isinstance(entries, (list, tuple)):
-                raise TypeError(f"AppWorld evaluation {key} must be a list")
-            for entry in entries:
-                requirement = _appworld_requirement(entry)
-                if not requirement:
-                    raise ValueError("AppWorld evaluation contains an empty requirement")
-                factor_id = appworld_factor_id(requirement)
-                if factor_id in requirements and requirements[factor_id] != requirement:
-                    raise ValueError("AppWorld evaluation requirement hash collision")
-                if factor_id in outcomes:
-                    raise ValueError("AppWorld evaluation contains a duplicate requirement")
-                requirements[factor_id] = requirement
-                outcomes[factor_id] = value
-        if outcomes:
-            return outcomes
-    return {}
+    required_keys = {"passes", "failures", "num_tests", "success"}
+    missing_keys = required_keys - set(evaluation)
+    if missing_keys:
+        raise ValueError(f"AppWorld TestTracker output is missing keys: {sorted(missing_keys)}")
+    num_tests = evaluation["num_tests"]
+    if isinstance(num_tests, (bool, np.bool_)) or not isinstance(num_tests, (int, np.integer)):
+        raise TypeError("AppWorld num_tests must be an integer")
+    if int(num_tests) <= 0:
+        raise ValueError("AppWorld num_tests must be positive")
+    success = evaluation["success"]
+    if not isinstance(success, (bool, np.bool_)):
+        raise TypeError("AppWorld success must be boolean")
+
+    outcomes: dict[str, float] = {}
+    requirements: dict[str, str] = {}
+    for value, key in ((1.0, "passes"), (0.0, "failures")):
+        entries = evaluation[key]
+        if not isinstance(entries, (list, tuple)):
+            raise TypeError(f"AppWorld evaluation {key} must be a list")
+        for entry in entries:
+            requirement = _appworld_requirement(entry)
+            factor_id = appworld_factor_id(requirement)
+            if factor_id in requirements and requirements[factor_id] != requirement:
+                raise ValueError("AppWorld evaluation requirement hash collision")
+            if factor_id in outcomes:
+                raise ValueError("AppWorld evaluation contains a duplicate requirement")
+            requirements[factor_id] = requirement
+            outcomes[factor_id] = value
+    if len(outcomes) != int(num_tests):
+        raise ValueError("AppWorld pass/failure entries are not exhaustive for num_tests")
+    expected_success = all(value == 1.0 for value in outcomes.values())
+    if bool(success) != expected_success:
+        raise ValueError("AppWorld success is inconsistent with pass/failure outcomes")
+    return outcomes
 
 
 def appworld_factor_snapshot(
@@ -293,14 +234,10 @@ def appworld_factor_snapshot(
     """Turn AppWorld's per-test evaluation booleans into a fixed factor vector."""
 
     if hasattr(evaluation, "to_dict"):
-        evaluation = evaluation.to_dict()
+        evaluation = evaluation.to_dict(stats_only=False)
     if not isinstance(evaluation, Mapping):
         raise TypeError("AppWorld evaluation must be a mapping or provide to_dict()")
     leaves = _appworld_test_outcomes(evaluation)
-    if not leaves:
-        leaves = flatten_boolean_leaves(evaluation)
-    if not leaves:
-        raise ValueError("AppWorld evaluation exposed no boolean test results")
     factor_ids = tuple(sorted(leaves)) if expected_factor_ids is None else tuple(expected_factor_ids)
     missing = set(factor_ids) - set(leaves)
     extra = set(leaves) - set(factor_ids)
@@ -321,11 +258,14 @@ def appworld_factor_snapshot(
         tuple(leaves[factor_id] for factor_id in factor_ids),
         normalized_read_sets,
         schema_version,
+        channel_roles={factor_id: "process_verifier" for factor_id in factor_ids},
+        potential_weights=np.full(len(factor_ids), 1.0 / len(factor_ids)),
+        source_revision=APPWORLD_SOURCE_REVISION,
     )
 
 
 def conservative_future_schema(snapshot: Mapping[str, Any], environment: str) -> dict[str, Any]:
-    """Connect the action to every future factor; residual routing is compiler-enforced.
+    """Connect the action to every future channel; opaque-target routing is explicit.
 
     This schema intentionally accounts for observation/history mediation through
     later policy actions. Environment-specific sparsity requires a stronger

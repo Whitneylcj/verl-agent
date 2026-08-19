@@ -22,7 +22,10 @@ DEFAULT_METRICS = (
     "agent_diag/terminal_failure_rate",
     "agent_diag/repeated_action_rate",
     "exact_diag/no_factor_progress_rate",
-    "exact/residual_ratio_mean",
+    "exact/closure_abs_mass_mean",
+    "exact/closure_abs_ratio_mean",
+    "exact/opaque_target_abs_ratio_mean",
+    "exact/closure_route_density_mean",
     "exact/cone_density_mean",
     "exact/schema_fallback_rate",
     "exact/resource_graph_span_rate",
@@ -351,15 +354,15 @@ def diagnose_report(report: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "do not interpret factor-level sparsity while all factors read all models",
             ),
         )
-    residual_ratio = latest("exact/residual_ratio_mean")
-    if residual_ratio is not None and residual_ratio >= 0.8:
+    opaque_target_ratio = latest("exact/opaque_target_abs_ratio_mean")
+    if opaque_target_ratio is not None and opaque_target_ratio >= 0.8:
         add(
             "weak_exact_factor_explanation",
             "medium",
-            {"exact/residual_ratio_mean": residual_ratio},
+            {"exact/opaque_target_abs_ratio_mean": opaque_target_ratio},
             (
-                "inspect factor snapshots and terminal residual",
-                "improve verifier factors without adding model-visible reward hints",
+                "inspect channel targets and the opaque task remainder",
+                "improve official verifier coverage without adding model-visible reward hints",
             ),
         )
     cone_density = latest("exact/cone_density_mean")

@@ -1,9 +1,21 @@
+import copy
+import importlib.util
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from recipe.exact.env_probes import (
+    ALFWORLD_SOURCE_REVISION,
+    APPWORLD_SOURCE_REVISION,
+    GYM_SOKOBAN_SOURCE_REVISION,
+    TEXTWORLD_SOURCE_REVISION,
+    WEBSHOP_SOURCE_REVISION,
     alfworld_factor_snapshot,
     appworld_factor_snapshot,
+    compute_webshop_official_current_score,
     conservative_future_schema,
     sokoban_factor_snapshot,
     webshop_factor_snapshot,
@@ -33,7 +45,8 @@ def test_sokoban_snapshot_uses_only_official_reward_events():
     )
     assert snapshot["values"] == (4.0, 2.0, 1.0, 1.0)
     assert snapshot["potential_weights"] == (-0.1, 1.0, -1.0, 10.0)
-    assert snapshot["schema_version"] == "exact.sokoban.official_reward.v1"
+    assert set(snapshot["channel_roles"].values()) == {"return_component"}
+    assert snapshot["source_revision"] == GYM_SOKOBAN_SOURCE_REVISION
 
 
 def test_sokoban_official_factor_deltas_reconstruct_each_step_reward():
@@ -68,160 +81,228 @@ def test_sokoban_probe_rejects_non_official_or_invalid_factors():
         )
 
 
-def test_alfworld_goal_probe_is_available_from_sparse_info():
-    assert alfworld_factor_snapshot({"won": True})["values"] == (1.0,)
-    assert alfworld_factor_snapshot({})["values"] == (0.0,)
+def test_alfworld_uses_one_official_cumulative_intermediate_reward_channel():
+    snapshot = alfworld_factor_snapshot(-2.0)
+    assert snapshot["factor_ids"] == ("textworld_intermediate_reward_cumulative",)
+    assert snapshot["values"] == (-2.0,)
+    assert snapshot["channel_roles"] == {"textworld_intermediate_reward_cumulative": "process_verifier"}
+    assert snapshot["potential_weights"] == (1.0,)
+    assert snapshot["source_revision"] == (f"{ALFWORLD_SOURCE_REVISION};{TEXTWORLD_SOURCE_REVISION}")
+    with pytest.raises(ValueError, match="finite"):
+        alfworld_factor_snapshot(float("nan"))
 
 
-def test_alfworld_task_probe_compiles_facts_into_subgoals():
-    task = {
-        "task_type": "pick_clean_then_place_in_recep",
-        "object_target": "Apple",
-        "parent_target": "CounterTop",
-        "toggle_target": "",
-    }
-    info = {
-        "won": False,
-        "facts": [
-            {"name": "holds", "arguments": ["agent", "apple 1"]},
-            {"name": "isclean", "arguments": ["apple 1"]},
-            {"name": "inreceptacle", "arguments": ["apple 1", "countertop 2"]},
-        ],
-    }
-    snapshot = alfworld_factor_snapshot(info, task)
-    assert snapshot["factor_ids"] == (
-        "object_discovered",
-        "inventory_target_compatible",
-        "object_acquired",
-        "object_cleaned",
-        "object_placed_1",
-        "goal_satisfied",
+def test_webshop_uses_one_official_current_score_channel():
+    snapshot = webshop_factor_snapshot(0.625)
+    assert snapshot["factor_ids"] == ("webshop_official_current_score",)
+    assert snapshot["values"] == (0.625,)
+    assert snapshot["channel_roles"] == {"webshop_official_current_score": "process_verifier"}
+    assert snapshot["source_revision"] == WEBSHOP_SOURCE_REVISION
+    for invalid in (-0.01, 1.01, float("nan")):
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            webshop_factor_snapshot(invalid)
+
+
+def test_webshop_current_score_matches_direct_official_scorer_call():
+    calls = []
+
+    def scorer(product, goal, *, price, options):
+        calls.append((product, goal, price, options))
+        return 0.75
+
+    product = {"Title": "item"}
+    goal = {"instruction_text": "buy item"}
+    options = {"color": "blue"}
+    score = compute_webshop_official_current_score(
+        available_actions={"clickables": ["description", "buy now"]},
+        session={"asin": "A1", "goal": goal, "options": options},
+        product_item_dict={"A1": product},
+        product_prices={"A1": 9.99},
+        scorer=scorer,
     )
-    assert snapshot["values"] == (0.0, 1.0, 1.0, 1.0, 1.0, 0.0)
+
+    assert score == 0.75
+    assert calls == [(product, goal, 9.99, options)]
 
 
-def test_alfworld_probe_tracks_observable_discovery_without_task_text_leakage():
-    task = {
-        "task_type": "pick_heat_then_place_in_recep",
-        "object_target": "Mug",
-        "parent_target": "CoffeeMachine",
-    }
-    reset = alfworld_factor_snapshot(
-        {"observation_text": "You see a fridge 1. Your task is to: heat some mug."},
-        task,
+def test_webshop_current_score_is_zero_off_item_page_without_scorer_call():
+    def unexpected_scorer(*args, **kwargs):
+        raise AssertionError((args, kwargs))
+
+    score = compute_webshop_official_current_score(
+        available_actions={"clickables": ["search"]},
+        session={"asin": None, "goal": {}, "options": {}},
+        product_item_dict={},
+        product_prices={},
+        scorer=unexpected_scorer,
     )
-    visible = alfworld_factor_snapshot(
-        {"observation_text": "The fridge is open. In it, you see a mug 1."},
-        task,
-    )
-    remembered = alfworld_factor_snapshot(
-        {"observation_text": "You arrive at coffeemachine 1.", "exact.object_discovered": True},
-        task,
-    )
-    assert reset["values"][0] == 0.0
-    assert visible["values"][0] == 1.0
-    assert remembered["values"][0] == 1.0
+    assert score == 0.0
 
 
-def test_alfworld_probe_penalizes_only_wrong_inventory_objects():
-    task = {
-        "task_type": "pick_heat_then_place_in_recep",
-        "object_target": "Mug",
-        "parent_target": "CoffeeMachine",
+def test_webshop_score_tracks_official_options_without_mutating_session():
+    session = {
+        "asin": "A1",
+        "goal": {"desired_color": "blue"},
+        "options": {"color": "red"},
+        "actions": {"options": 1},
+        "done": False,
+        "reward": 0.0,
     }
-    wrong = alfworld_factor_snapshot(
-        {"facts": [{"name": "holds", "arguments": ["agent", "bowl 1"]}]},
-        task,
+    original = copy.deepcopy(session)
+
+    def scorer(product, goal, *, price, options):
+        del product, price
+        return float(options["color"] == goal["desired_color"])
+
+    kwargs = {
+        "available_actions": {"clickables": ["description"]},
+        "session": session,
+        "product_item_dict": {"A1": {"Title": "item"}},
+        "product_prices": {"A1": 1.0},
+        "scorer": scorer,
+    }
+    assert compute_webshop_official_current_score(**kwargs) == 0.0
+    assert compute_webshop_official_current_score(**kwargs) == 0.0
+    assert session == original
+
+    session["options"]["color"] = "blue"
+    assert compute_webshop_official_current_score(**kwargs) == 1.0
+
+
+@pytest.mark.parametrize(("official_task_score", "expected_training_reward", "expected_won"), ((0.75, 0.0, False), (1.0, 10.0, True)))
+def test_webshop_worker_preserves_raw_task_score_before_binarizing_reward(
+    monkeypatch,
+    official_task_score,
+    expected_training_reward,
+    expected_won,
+):
+    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "gym", SimpleNamespace(Env=object))
+    module_path = Path(__file__).parents[3] / "agent_system/environments/env_package/webshop/envs.py"
+    spec = importlib.util.spec_from_file_location("webshop_envs_under_test", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class FakeWebshopEnv:
+        session = "session-1"
+        server = SimpleNamespace(user_sessions={"session-1": {"verbose_info": {"r_att": 0.5}}})
+
+        def step(self, action):
+            assert action == "click[buy now]"
+            return "terminal observation", official_task_score, True, {}
+
+        def get_available_actions(self):
+            return {"has_search_bar": True, "clickables": []}
+
+        def official_current_score(self, available_actions):
+            assert available_actions == self.get_available_actions()
+            return 0.0
+
+    worker = object.__new__(module.WebshopWorker)
+    worker.env = FakeWebshopEnv()
+    worker._exact_official_current_score = 0.5
+
+    _, reward, done, info = worker.step("click[buy now]")
+
+    assert done
+    assert info["task_score"] == official_task_score
+    assert reward == expected_training_reward
+    assert info["won"] is expected_won
+    assert worker._exact_official_current_score == 0.0
+
+
+def _evaluation(*, passes, failures, success):
+    return {
+        "num_tests": len(passes) + len(failures),
+        "success": success,
+        "passes": [{"requirement": value} for value in passes],
+        "failures": [{"requirement": value} for value in failures],
+    }
+
+
+def test_appworld_per_requirement_schema_is_fixed_and_normalized():
+    evaluation = _evaluation(
+        passes=("created the playlist",),
+        failures=("shared the playlist",),
+        success=False,
     )
-    target = alfworld_factor_snapshot(
-        {"facts": [{"name": "holds", "arguments": ["agent", "mug 1"]}]},
-        task,
-    )
-    assert wrong["values"][1] == 0.0
-    assert target["values"][1] == 1.0
-
-
-def test_alfworld_pick_two_counts_distinct_object_instances():
-    task = {
-        "task_type": "pick_two_obj_and_place",
-        "object_target": "Apple",
-        "parent_target": "CounterTop",
-    }
-    info = {
-        "facts": [
-            {"name": "inreceptacle", "arguments": ["apple 1", "countertop 1"]},
-            {"name": "inreceptacle", "arguments": ["apple 2", "countertop 1"]},
-        ]
-    }
-    snapshot = alfworld_factor_snapshot(info, task)
-    assert snapshot["values"][-3:-1] == (1.0, 1.0)
-
-
-def test_alfworld_probe_reports_current_state_regressions():
-    task = {
-        "task_type": "pick_and_place_simple",
-        "object_target": "Apple",
-        "parent_target": "CounterTop",
-    }
-    held = alfworld_factor_snapshot(
-        {"facts": [{"name": "holds", "arguments": ["agent", "apple 1"]}]},
-        task,
-    )
-    released = alfworld_factor_snapshot({"facts": []}, task)
-    acquired_index = held["factor_ids"].index("object_acquired")
-    assert held["values"][acquired_index] == 1.0
-    assert released["values"][acquired_index] == 0.0
-
-
-def test_webshop_missing_components_are_zero_not_unknown_schema():
-    initial = webshop_factor_snapshot(None)
-    terminal = webshop_factor_snapshot({"r_type": 1, "r_att": 0.5, "r_price": True})
-    assert initial["factor_ids"] == terminal["factor_ids"]
-    assert terminal["values"] == (1.0, 0.5, 0.0, 1.0)
-
-
-def test_appworld_per_test_boolean_schema_is_fixed():
-    evaluation = {
-        "success": False,
-        "passes": [
-            {"requirement": "created the playlist"},
-        ],
-        "failures": [
-            {"requirement": "shared the playlist", "traceback": "changes over time"},
-        ],
-    }
     first = appworld_factor_snapshot(evaluation)
     second = appworld_factor_snapshot(evaluation, expected_factor_ids=first["factor_ids"])
     assert first == second
-    progressed = {
-        "success": True,
-        "passes": [
-            {"requirement": "created the playlist"},
-            {"requirement": "shared the playlist"},
-        ],
-        "failures": [],
-    }
+    assert set(first["channel_roles"].values()) == {"process_verifier"}
+    assert first["potential_weights"] == (0.5, 0.5)
+    assert first["source_revision"] == APPWORLD_SOURCE_REVISION
+
+    progressed = _evaluation(
+        passes=("created the playlist", "shared the playlist"),
+        failures=(),
+        success=True,
+    )
     progressed_snapshot = appworld_factor_snapshot(
         progressed,
         expected_factor_ids=first["factor_ids"],
     )
     assert progressed_snapshot["values"] == (1.0, 1.0)
 
-    changed = {
+
+class _Tracker:
+    def __init__(self, payload):
+        self.payload = payload
+        self.stats_only = None
+
+    def to_dict(self, *, stats_only):
+        self.stats_only = stats_only
+        return self.payload
+
+
+def test_appworld_requests_full_testtracker_requirements():
+    tracker = _Tracker(_evaluation(passes=("done",), failures=(), success=True))
+    snapshot = appworld_factor_snapshot(tracker)
+    assert tracker.stats_only is False
+    assert snapshot["values"] == (1.0,)
+
+
+@pytest.mark.parametrize(
+    "evaluation,match",
+    (
+        ({"passes": [], "failures": []}, "missing keys"),
+        (
+            {"num_tests": 1, "success": True, "passes": [], "failures": []},
+            "not exhaustive",
+        ),
+        (
+            {
+                "num_tests": 1,
+                "success": False,
+                "passes": [{"name": "not an official requirement"}],
+                "failures": [],
+            },
+            "requirement field",
+        ),
+        (
+            _evaluation(passes=("done",), failures=(), success=False),
+            "inconsistent",
+        ),
+    ),
+)
+def test_appworld_malformed_or_incomplete_tracker_output_fails_closed(evaluation, match):
+    with pytest.raises((TypeError, ValueError), match=match):
+        appworld_factor_snapshot(evaluation)
+
+
+def test_appworld_rejects_duplicate_requirements():
+    evaluation = {
+        "num_tests": 2,
         "success": False,
-        "passes": [{"requirement": "created the playlist"}],
-        "failures": [],
+        "passes": [{"requirement": "same"}],
+        "failures": [{"requirement": "same"}],
     }
-    try:
-        appworld_factor_snapshot(changed, expected_factor_ids=first["factor_ids"])
-    except ValueError as error:
-        assert "schema changed" in str(error)
-    else:
-        raise AssertionError("AppWorld probe accepted a changed verifier schema")
+    with pytest.raises(ValueError, match="duplicate"):
+        appworld_factor_snapshot(evaluation)
 
 
-def test_default_effect_schema_keeps_every_future_factor():
-    snapshot = webshop_factor_snapshot(None)
+def test_default_effect_schema_keeps_every_future_channel():
+    snapshot = webshop_factor_snapshot(0.0)
     schema = conservative_future_schema(snapshot, "webshop")
     assert schema["descendant_factor_ids"] == snapshot["factor_ids"]
     assert schema["opaque"] is False

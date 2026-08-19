@@ -14,7 +14,11 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from recipe.exact.core_exact import IdentityPotential, build_conserved_atoms, compute_exact_credits
+from recipe.exact.core_exact import (
+    IdentityPotential,
+    build_scoped_conserved_atoms,
+    compute_exact_credits,
+)
 from recipe.exact.credit_spec import EffectSpan, SpanRoute, snapshots_from_values
 
 FACTOR_IDS = ("x", "y", "goal", "coin")
@@ -46,7 +50,7 @@ def _state_probability(bits: Sequence[int], probabilities: Sequence[float]) -> f
     return float(math.prod(probability if bit else 1.0 - probability for bit, probability in zip(bits, probabilities)))
 
 
-def _simulate_snapshots(actions: Sequence[int], coin: int):
+def _simulate_snapshots(actions: Sequence[int], coin: int, potential_weights: Sequence[float]):
     x = y = goal = coin_value = 0
     values = [(x, y, goal, coin_value)]
     final_step = len(actions) - 1
@@ -62,7 +66,13 @@ def _simulate_snapshots(actions: Sequence[int], coin: int):
         if step == final_step:
             coin_value = coin
         values.append((x, y, goal, coin_value))
-    return snapshots_from_values(FACTOR_IDS, values, read_sets=READ_SETS)
+    return snapshots_from_values(
+        FACTOR_IDS,
+        values,
+        read_sets=READ_SETS,
+        channel_roles={factor_id: "return_component" for factor_id in FACTOR_IDS},
+        potential_weights=potential_weights,
+    )
 
 
 def _sound_routes(action_count: int, atoms: Sequence[Any]) -> tuple[SpanRoute, ...]:
@@ -76,9 +86,7 @@ def _sound_routes(action_count: int, atoms: Sequence[Any]) -> tuple[SpanRoute, .
     for action_index in range(action_count):
         step_id = action_index + 1
         factors = factor_descendants[action_index] if action_index < len(factor_descendants) else frozenset()
-        descendants = [atom.atom_id for atom in atoms if not atom.is_residual and atom.factor_id in factors and atom.step_id is not None and atom.step_id >= step_id]
-        if action_index < len(BASE_ACTION_NAMES):
-            descendants.append("residual")
+        descendants = [atom.atom_id for atom in atoms if atom.atom_kind in {"delta", "closure"} and atom.channel_id in factors and atom.step_id >= step_id]
         action_name = BASE_ACTION_NAMES[action_index] if action_index < len(BASE_ACTION_NAMES) else f"distractor_{action_index - len(BASE_ACTION_NAMES)}"
         routes.append(
             SpanRoute(
@@ -108,9 +116,14 @@ def _enumerate_trajectories(
         action_probability = _state_probability(actions, probabilities)
         scores = np.asarray(actions, dtype=np.float64) - np.asarray(probabilities, dtype=np.float64)
         for coin in (0, 1):
-            snapshots = _simulate_snapshots(actions, coin)
+            snapshots = _simulate_snapshots(actions, coin, potential_weights)
             episode_return = float(snapshots[-1].values[2] + coin_reward * coin)
-            conserved = build_conserved_atoms(snapshots, episode_return, potential, tolerance=1e-12)
+            conserved = build_scoped_conserved_atoms(
+                snapshots,
+                episode_return,
+                potential,
+                tolerance=1e-12,
+            )
             trajectories.append(
                 ToyTrajectory(
                     probability=action_probability * 0.5,
@@ -169,7 +182,6 @@ def _credit_vector(
         trajectory.conserved,
         routes,
         mode=mode,
-        force_residual_descendant=False,
     )
     return np.asarray([span.credit for span in result.span_credits], dtype=np.float64)
 

@@ -18,6 +18,12 @@ def _snapshot(checkpoint_id, values):
         "factor_ids": ("a_value", "b_value"),
         "values": values,
         "read_sets": {"a_value": ("module:a",), "b_value": ("module:b",)},
+        "channel_roles": {
+            "a_value": "return_component",
+            "b_value": "return_component",
+        },
+        "potential_weights": (1.0, 2.0),
+        "source_revision": "fixture@1",
     }
 
 
@@ -70,7 +76,6 @@ def test_exact_advantage_is_padding_safe_and_trajectory_normalized():
         _test_batch(),
         config={
             "mode": "graph",
-            "force_residual_descendant": False,
             "potential": {"weights": {"a_value": 1.0, "b_value": 2.0}},
         },
     )
@@ -93,17 +98,16 @@ def test_exact_advantage_is_padding_safe_and_trajectory_normalized():
     assert metrics["exact/verifier_snapshot_count"] == 6
     assert np.isclose(metrics["exact/probe_seconds_per_snapshot"], 0.1)
     assert len(traces) == 2
+    assert traces[0]["atom_sum"] == traces[0]["episode_return"]
+    assert set(traces[0]["channel_identities"]) == {"a_value", "b_value"}
 
 
-def test_environment_potential_weights_replace_normalized_default():
+def test_environment_native_potential_weights_are_default():
     data = _test_batch()
-    for key in ("exact_factor_pre", "exact_factor_post"):
-        for snapshot in data.non_tensor_batch[key]:
-            snapshot["potential_weights"] = (1.0, 2.0)
 
     data, metrics, _ = compute_exact_advantage(
         data,
-        config={"mode": "graph", "force_residual_descendant": False},
+        config={"mode": "graph"},
     )
 
     expected = torch.tensor(
@@ -115,7 +119,9 @@ def test_environment_potential_weights_replace_normalized_default():
         ]
     )
     torch.testing.assert_close(data.batch["advantages"], expected)
-    assert metrics["exact/residual_ratio_mean"] == 0.0
+    assert metrics["exact/closure_abs_mass_mean"] == 0.0
+    assert metrics["exact/closure_abs_ratio_mean"] == 0.0
+    assert metrics["exact/opaque_target_abs_ratio_mean"] == 0.0
 
 
 def test_scaled_seq_mean_loss_equals_trajectory_mean_span_token_sum():
@@ -126,7 +132,6 @@ def test_scaled_seq_mean_loss_equals_trajectory_mean_span_token_sum():
         _test_batch(),
         config={
             "mode": "graph",
-            "force_residual_descendant": False,
             "potential": {"weights": {"a_value": 1.0, "b_value": 2.0}},
         },
     )
@@ -230,7 +235,6 @@ def test_resource_graph_schema_compiles_model_reads_into_token_spans():
         data,
         config={
             "mode": "graph",
-            "force_residual_descendant": False,
             "potential": {"weights": {"a_value": 1.0, "b_value": 2.0}},
         },
     )
@@ -253,11 +257,22 @@ def test_checkpoint_discontinuity_fails_closed():
         raise AssertionError("EXACT accepted a discontinuous verifier trajectory")
 
 
+def test_sokoban_schema_rejects_unexplained_episode_return():
+    data = _test_batch()
+    for key in ("exact_factor_pre", "exact_factor_post"):
+        for snapshot in data.non_tensor_batch[key]:
+            snapshot["schema_version"] = "exact.sokoban.official_reward.v1"
+    data.non_tensor_batch["episode_rewards"][:2] = 4.0
+
+    with pytest.raises(AssertionError, match="do not reconstruct"):
+        compute_exact_advantage(data, config={"mode": "graph"})
+
+
 def test_graph_cv_uses_current_alpha_and_fits_only_next_alpha():
     controller = DelayedAlphaController(("default",), ridge=1e-9)
     data, metrics, traces = compute_exact_advantage(
         _test_batch(),
-        config={"mode": "graph_cv", "force_residual_descendant": False},
+        config={"mode": "graph_cv"},
         alpha_by_bucket=controller.active,
     )
     assert metrics["exact/cv_alpha_active/default"] == 0.0

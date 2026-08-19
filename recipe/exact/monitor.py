@@ -155,7 +155,7 @@ def build_trajectory_diagnostics(
     batch: Any,
     traces: Sequence[Mapping[str, Any]],
     max_steps: int | None = None,
-    residual_warning_ratio: float = 0.95,
+    opaque_target_warning_ratio: float = 0.95,
     tokenizer: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Build deterministic, no-model hypotheses for every non-padding trajectory."""
@@ -218,7 +218,7 @@ def build_trajectory_diagnostics(
             termination = "collector_incomplete"
 
         trace = trace_by_id.get(trajectory_id, {})
-        residual_ratio = float(trace["residual_ratio"]) if "residual_ratio" in trace else None
+        opaque_target_abs_ratio = float(trace["opaque_target_abs_ratio"]) if "opaque_target_abs_ratio" in trace else None
         tags = []
         if not bool(np.all(valid)):
             tags.append("invalid_action")
@@ -234,8 +234,8 @@ def build_trajectory_diagnostics(
             tags.append("repeated_action")
         if fallback_steps:
             tags.append("opaque_schema_fallback")
-        if residual_ratio is not None and residual_ratio >= residual_warning_ratio:
-            tags.append("high_residual_ratio")
+        if opaque_target_abs_ratio is not None and opaque_target_abs_ratio >= opaque_target_warning_ratio:
+            tags.append("high_opaque_target_ratio")
 
         diagnostics.append(
             {
@@ -260,7 +260,7 @@ def build_trajectory_diagnostics(
                 "success": success_values,
                 "termination": termination,
                 "diagnostic_tags": tags,
-                "residual_ratio": residual_ratio,
+                "opaque_target_abs_ratio": opaque_target_abs_ratio,
                 "cone_density": float(trace["cone_density"]) if "cone_density" in trace else None,
                 "conservation_error": (float(trace["conservation_error"]) if "conservation_error" in trace else None),
             }
@@ -358,9 +358,7 @@ def summarize_validation_factor_progress(
         changed.append(bool(np.any(np.abs(delta) > 1e-12)))
         decreased.append(bool(np.any(delta < -1e-12)))
 
-    trajectory_changed = {
-        str(trajectory_id): False for trajectory_id in trajectory_ids
-    }
+    trajectory_changed = {str(trajectory_id): False for trajectory_id in trajectory_ids}
     for trajectory_id, step_changed in zip(trajectory_ids, changed):
         trajectory_changed[str(trajectory_id)] |= step_changed
     return {
@@ -432,7 +430,7 @@ class AgentRunObserver:
         self,
         output_dir: str | os.PathLike[str],
         conservation_tolerance: float = 1e-8,
-        residual_warning_ratio: float = 0.95,
+        opaque_target_warning_ratio: float = 0.95,
         ppo_kl_warning: float = 0.1,
         clipfrac_warning: float = 0.3,
         grad_norm_warning: float = 100.0,
@@ -446,7 +444,7 @@ class AgentRunObserver:
         self.output_dir = Path(output_dir).expanduser().resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.conservation_tolerance = float(conservation_tolerance)
-        self.residual_warning_ratio = float(residual_warning_ratio)
+        self.opaque_target_warning_ratio = float(opaque_target_warning_ratio)
         self.ppo_kl_warning = float(ppo_kl_warning)
         self.clipfrac_warning = float(clipfrac_warning)
         self.grad_norm_warning = float(grad_norm_warning)
@@ -482,8 +480,8 @@ class AgentRunObserver:
         for key, predicate, warning in checks:
             if key in metrics and predicate(float(metrics[key])):
                 warnings.append(warning)
-        if float(metrics.get("exact/residual_ratio_mean", 0.0)) >= self.residual_warning_ratio:
-            warnings.append("high_residual_ratio")
+        if float(metrics.get("exact/opaque_target_abs_ratio_mean", 0.0)) >= self.opaque_target_warning_ratio:
+            warnings.append("high_opaque_target_ratio")
         if float(metrics.get("exact/schema_fallback_rate", 0.0)) > 0:
             warnings.append("opaque_schema_fallback")
         if float(metrics.get("exact/appworld_factor_opaque_rate", 0.0)) > 0:
@@ -776,7 +774,7 @@ def build_rollout_records(
         "max_steps",
         "no_factor_progress",
         "repeated_action",
-        "high_residual_ratio",
+        "high_opaque_target_ratio",
     ):
         matching = [item for item in trajectory_ids if tag in diagnostics.get(item, {}).get("diagnostic_tags", ())]
         if matching:

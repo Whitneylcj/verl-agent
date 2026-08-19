@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
 
 import gymnasium as gym
@@ -64,24 +63,35 @@ class AlfworldWorker:
         self.seed = seed
         self.deterministic_reset = deterministic_reset
         self.env.seed(seed)
-        self._exact_info = {"won": False}
-        self._exact_task_params = None
+        self._exact_cumulative_intermediate_reward = 0.0
         self._exact_snapshot = None
-        self._exact_object_discovered = False
+
+    @staticmethod
+    def _exact_intermediate_reward(infos):
+        if "intermediate_reward" not in infos:
+            raise RuntimeError(
+                "ALFWorld EXACT requires TextWorld EnvInfos(intermediate_reward=True)"
+            )
+        raw_value = infos["intermediate_reward"]
+        if isinstance(raw_value, np.ndarray):
+            if raw_value.size != 1:
+                raise RuntimeError("ALFWorld worker expected one intermediate reward")
+            raw_value = raw_value.reshape(-1)[0]
+        elif isinstance(raw_value, (list, tuple)):
+            if len(raw_value) != 1:
+                raise RuntimeError("ALFWorld worker expected one intermediate reward")
+            raw_value = raw_value[0]
+        value = float(raw_value)
+        if not np.isfinite(value) or value not in {-1.0, 0.0, 1.0}:
+            raise RuntimeError(
+                "TextWorld intermediate_reward must be a finite value in {-1, 0, 1}"
+            )
+        return value
 
     def _refresh_exact_snapshot(self):
-        from recipe.exact.env_probes import alfworld_factor_snapshot, alfworld_target_is_visible
+        from recipe.exact.env_probes import alfworld_factor_snapshot
 
-        if self._exact_task_params and alfworld_target_is_visible(
-            self._exact_info,
-            self._exact_task_params,
-        ):
-            self._exact_object_discovered = True
-        snapshot_info = {
-            **self._exact_info,
-            "exact.object_discovered": self._exact_object_discovered,
-        }
-        snapshot = alfworld_factor_snapshot(snapshot_info, self._exact_task_params)
+        snapshot = alfworld_factor_snapshot(self._exact_cumulative_intermediate_reward)
         if self._exact_snapshot is not None:
             if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
                 raise RuntimeError("ALFWorld factor schema changed within a trajectory")
@@ -92,11 +102,7 @@ class AlfworldWorker:
         actions = [action] 
         
         obs, scores, dones, infos = self.env.step(actions)
-        infos['observation_text'] = obs
-        self._exact_info = {
-            key: value[0] if isinstance(value, (list, tuple, np.ndarray)) else value
-            for key, value in infos.items()
-        }
+        self._exact_cumulative_intermediate_reward += self._exact_intermediate_reward(infos)
         self._refresh_exact_snapshot()
         return obs, scores, dones, infos
     
@@ -105,23 +111,11 @@ class AlfworldWorker:
         if self.deterministic_reset:
             self.env.seed(self.seed)
         obs, infos = self.env.reset()
-        infos['observation_text'] = obs
-        self._exact_info = {
-            key: value[0] if isinstance(value, (list, tuple, np.ndarray)) else value
-            for key, value in infos.items()
-        }
-        gamefile = self._exact_info.get("extra.gamefile")
-        self._exact_task_params = None
+        initial_intermediate_reward = self._exact_intermediate_reward(infos)
+        if initial_intermediate_reward != 0.0:
+            raise RuntimeError("TextWorld intermediate_reward must be zero at reset")
+        self._exact_cumulative_intermediate_reward = 0.0
         self._exact_snapshot = None
-        self._exact_object_discovered = False
-        if gamefile:
-            trajectory_path = os.path.join(os.path.dirname(gamefile), "traj_data.json")
-            with open(trajectory_path, encoding="utf-8") as handle:
-                trajectory = json.load(handle)
-            self._exact_task_params = {
-                **trajectory["pddl_params"],
-                "task_type": trajectory["task_type"],
-            }
         self._refresh_exact_snapshot()
         return obs, infos
     

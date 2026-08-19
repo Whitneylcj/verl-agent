@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence, Tuple
+from typing import Iterable, Literal, Mapping, Sequence, Tuple
 
 import numpy as np
 
 ResourceSet = Tuple[str, ...]
+AtomKind = Literal["delta", "closure", "opaque_target"]
+ChannelRole = Literal["return_component", "process_verifier"]
+CHANNEL_ROLES = frozenset({"return_component", "process_verifier"})
 
 
 def _stable_unique_strings(values: Iterable[str], field_name: str) -> tuple[str, ...]:
@@ -24,10 +27,10 @@ class FactorSnapshot:
     """Programmatic verifier state at one environment checkpoint.
 
     ``values`` are training-only instrumentation and must never be inserted into
-    the policy prompt. ``potential_weights`` optionally carries fixed weights
-    defined by an environment's official reward decomposition. ``read_sets``
-    describes the state resources each factor may read; missing entries are
-    treated as unknown rather than empty.
+    the policy prompt. ``channel_roles`` separates official return components
+    from process-only verifiers. ``potential_weights`` carries the native
+    channel weights. ``read_sets`` describes the resources read by each channel;
+    missing entries are treated as unknown rather than empty.
     """
 
     checkpoint_id: int
@@ -36,6 +39,8 @@ class FactorSnapshot:
     read_sets: Mapping[str, ResourceSet] = field(default_factory=dict)
     schema_version: str = "exact.credit.v1"
     potential_weights: np.ndarray | None = None
+    channel_roles: Mapping[str, ChannelRole] = field(default_factory=dict)
+    source_revision: str | None = None
 
     def __post_init__(self) -> None:
         factor_ids = _stable_unique_strings(self.factor_ids, "factor_ids")
@@ -58,10 +63,20 @@ class FactorSnapshot:
                 raise ValueError(f"read set refers to unknown factor: {factor_id}")
             normalized_read_sets[factor_id] = _stable_unique_strings(resources, f"read_sets[{factor_id}]")
 
+        normalized_roles = {str(key): str(role) for key, role in self.channel_roles.items()}
+        if set(normalized_roles) != set(factor_ids):
+            raise ValueError("channel_roles must contain exactly one role for every factor_id")
+        invalid_roles = set(normalized_roles.values()) - CHANNEL_ROLES
+        if invalid_roles:
+            raise ValueError(f"unsupported channel roles: {sorted(invalid_roles)}")
+        if self.source_revision is not None and not self.source_revision:
+            raise ValueError("source_revision must be non-empty when provided")
+
         object.__setattr__(self, "factor_ids", factor_ids)
         object.__setattr__(self, "values", values)
         object.__setattr__(self, "potential_weights", potential_weights)
         object.__setattr__(self, "read_sets", normalized_read_sets)
+        object.__setattr__(self, "channel_roles", normalized_roles)
 
     def value_by_id(self) -> Mapping[str, float]:
         return dict(zip(self.factor_ids, self.values.tolist()))
@@ -69,24 +84,29 @@ class FactorSnapshot:
 
 @dataclass(frozen=True)
 class CreditAtom:
-    """One return-conserving factor delta or the terminal residual."""
+    """One channel delta, local channel closure, or opaque target remainder."""
 
     atom_id: str
+    atom_kind: AtomKind
+    channel_id: str | None
     value: float
-    step_id: int | None
-    factor_id: str | None
+    step_id: int
     read_set: ResourceSet = ()
-    is_residual: bool = False
 
     def __post_init__(self) -> None:
         if not self.atom_id:
             raise ValueError("atom_id must not be empty")
         if not np.isfinite(self.value):
             raise ValueError("atom value must be finite")
-        if self.is_residual and self.factor_id is not None:
-            raise ValueError("the residual atom cannot have a factor_id")
-        if not self.is_residual and (self.step_id is None or self.factor_id is None):
-            raise ValueError("factor atoms require step_id and factor_id")
+        if self.atom_kind not in {"delta", "closure", "opaque_target"}:
+            raise ValueError(f"unsupported atom_kind: {self.atom_kind}")
+        if self.step_id <= 0:
+            raise ValueError("atom step_id must be positive")
+        if self.atom_kind == "opaque_target":
+            if self.channel_id is not None:
+                raise ValueError("opaque_target cannot have a channel_id")
+        elif not self.channel_id:
+            raise ValueError(f"{self.atom_kind} atoms require a channel_id")
         object.__setattr__(self, "read_set", _stable_unique_strings(self.read_set, "read_set"))
 
 
@@ -120,8 +140,8 @@ class SpanRoute:
     """Certified conservative atom route for one effect span.
 
     ``descendant_atom_ids=None`` means that the span is opaque and therefore
-    receives all atoms. Explicit routes are still forced to include the terminal
-    residual by default in the compiler.
+    receives all atoms. The compiler always adds ``opaque_target`` by its
+    explicit routing rule; channel closures are routed by their own read sets.
     """
 
     span: EffectSpan
@@ -144,6 +164,8 @@ def snapshots_from_values(
     factor_ids: Sequence[str],
     checkpoint_values: Sequence[Sequence[float]],
     read_sets: Mapping[str, Sequence[str]] | None = None,
+    channel_roles: Mapping[str, ChannelRole] | None = None,
+    potential_weights: Sequence[float] | None = None,
 ) -> tuple[FactorSnapshot, ...]:
     """Convenience constructor used by fixtures and simple environment probes."""
 
@@ -154,6 +176,8 @@ def snapshots_from_values(
             factor_ids=tuple(factor_ids),
             values=np.asarray(values, dtype=np.float64),
             read_sets=normalized_read_sets,
+            channel_roles=channel_roles or {factor_id: "process_verifier" for factor_id in factor_ids},
+            potential_weights=(None if potential_weights is None else np.asarray(potential_weights, dtype=np.float64)),
         )
         for checkpoint_id, values in enumerate(checkpoint_values)
     )
