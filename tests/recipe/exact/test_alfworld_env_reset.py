@@ -10,6 +10,7 @@ class _FakeBatchEnv:
     def __init__(self):
         self.seed_calls = []
         self.intermediate_rewards = []
+        self.reset_intermediate_reward = None
 
     def seed(self, seed):
         self.seed_calls.append(seed)
@@ -17,7 +18,7 @@ class _FakeBatchEnv:
     def reset(self):
         return ["observation"], {
             "extra.gamefile": [None],
-            "intermediate_reward": [0.0],
+            "intermediate_reward": [self.reset_intermediate_reward],
         }
 
     def step(self, actions):
@@ -83,4 +84,22 @@ def test_worker_fails_closed_on_invalid_intermediate_reward():
     worker.reset()
 
     with pytest.raises(RuntimeError, match=r"\{-1, 0, 1\}"):
+        worker.step("look")
+
+
+def test_worker_accepts_explicit_zero_at_reset():
+    worker, batch_env = _worker(deterministic_reset=False)
+    batch_env.reset_intermediate_reward = 0.0
+
+    worker.reset()
+
+    assert worker.exact_credit_snapshot()["values"] == (0.0,)
+
+
+def test_worker_fails_closed_when_intermediate_reward_is_missing_after_step():
+    worker, batch_env = _worker(deterministic_reset=False)
+    batch_env.intermediate_rewards = [None]
+    worker.reset()
+
+    with pytest.raises(RuntimeError, match="unavailable after step"):
         worker.step("look")

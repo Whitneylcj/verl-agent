@@ -45,9 +45,11 @@ factor is part of the default schema. The adapter is source-locked to
 
 The ALFWorld snapshot contains exactly one process channel: the cumulative
 official TextWorld `intermediate_reward`. The environment requests
-`EnvInfos(intermediate_reward=True)`, requires reset value zero, accepts only
-the native `-1/0/+1` step values, and never parses observations or facts into
-heuristic subgoals. The locked sources are
+`EnvInfos(intermediate_reward=True)`. Before the first transition, the
+asynchronous Gym stack may expose either zero or `None`; the adapter initializes
+both reset representations to cumulative value zero. After every step it
+accepts only the native `-1/0/+1` values and never parses observations or facts
+into heuristic subgoals. The locked sources are
 `alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e` and
 `microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2`.
 

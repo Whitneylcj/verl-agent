@@ -67,7 +67,7 @@ class AlfworldWorker:
         self._exact_snapshot = None
 
     @staticmethod
-    def _exact_intermediate_reward(infos):
+    def _exact_intermediate_reward(infos, *, at_reset=False):
         if "intermediate_reward" not in infos:
             raise RuntimeError(
                 "ALFWorld EXACT requires TextWorld EnvInfos(intermediate_reward=True)"
@@ -81,6 +81,12 @@ class AlfworldWorker:
             if len(raw_value) != 1:
                 raise RuntimeError("ALFWorld worker expected one intermediate reward")
             raw_value = raw_value[0]
+        if raw_value is None:
+            if at_reset:
+                # TextWorld's asynchronous Gym stack can expose None before the
+                # first transition. No process reward has accrued at reset.
+                return 0.0
+            raise RuntimeError("TextWorld intermediate_reward is unavailable after step")
         value = float(raw_value)
         if not np.isfinite(value) or value not in {-1.0, 0.0, 1.0}:
             raise RuntimeError(
@@ -111,7 +117,7 @@ class AlfworldWorker:
         if self.deterministic_reset:
             self.env.seed(self.seed)
         obs, infos = self.env.reset()
-        initial_intermediate_reward = self._exact_intermediate_reward(infos)
+        initial_intermediate_reward = self._exact_intermediate_reward(infos, at_reset=True)
         if initial_intermediate_reward != 0.0:
             raise RuntimeError("TextWorld intermediate_reward must be zero at reset")
         self._exact_cumulative_intermediate_reward = 0.0
