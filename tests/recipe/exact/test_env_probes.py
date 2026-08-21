@@ -81,15 +81,44 @@ def test_sokoban_probe_rejects_non_official_or_invalid_factors():
         )
 
 
-def test_alfworld_uses_one_official_cumulative_intermediate_reward_channel():
-    snapshot = alfworld_factor_snapshot(-2.0)
-    assert snapshot["factor_ids"] == ("textworld_intermediate_reward_cumulative",)
-    assert snapshot["values"] == (-2.0,)
-    assert snapshot["channel_roles"] == {"textworld_intermediate_reward_cumulative": "process_verifier"}
-    assert snapshot["potential_weights"] == (1.0,)
+def test_alfworld_uses_native_terminal_return_and_normalized_pddl_process_channels():
+    snapshot = alfworld_factor_snapshot(
+        "pick_heat_then_place_in_recep",
+        {
+            "target_hot": 1.0,
+            "target_placed": 0.0,
+            "target_hot_and_placed": 0.0,
+        },
+        won=False,
+    )
+    assert snapshot["factor_ids"] == (
+        "terminal_success",
+        "target_hot",
+        "target_placed",
+        "target_hot_and_placed",
+    )
+    assert snapshot["values"] == (0.0, 1.0, 0.0, 0.0)
+    assert snapshot["channel_roles"] == {
+        "terminal_success": "return_component",
+        "target_hot": "process_verifier",
+        "target_placed": "process_verifier",
+        "target_hot_and_placed": "process_verifier",
+    }
+    assert snapshot["potential_weights"] == (10.0, 1 / 3, 1 / 3, 1 / 3)
+    assert "alfworld.pddl.heatable" in snapshot["read_sets"]["target_placed"]
+    assert snapshot["schema_version"] == "exact.alfworld.pddl_goal_conditions.v1"
     assert snapshot["source_revision"] == (f"{ALFWORLD_SOURCE_REVISION};{TEXTWORLD_SOURCE_REVISION}")
-    with pytest.raises(ValueError, match="finite"):
-        alfworld_factor_snapshot(float("nan"))
+
+
+def test_alfworld_snapshot_fails_closed_on_schema_or_value_drift():
+    with pytest.raises(ValueError, match="missing=.*target_placed"):
+        alfworld_factor_snapshot("pick_and_place_simple", {}, won=False)
+    with pytest.raises(ValueError, match="binary"):
+        alfworld_factor_snapshot(
+            "pick_and_place_simple",
+            {"target_placed": 0.5},
+            won=False,
+        )
 
 
 def test_webshop_uses_one_official_current_score_channel():

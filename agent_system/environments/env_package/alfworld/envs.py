@@ -63,41 +63,42 @@ class AlfworldWorker:
         self.seed = seed
         self.deterministic_reset = deterministic_reset
         self.env.seed(seed)
-        self._exact_cumulative_intermediate_reward = 0.0
+        self._exact_verifier_spec = None
         self._exact_snapshot = None
 
     @staticmethod
-    def _exact_intermediate_reward(infos, *, at_reset=False):
-        if "intermediate_reward" not in infos:
-            raise RuntimeError(
-                "ALFWorld EXACT requires TextWorld EnvInfos(intermediate_reward=True)"
-            )
-        raw_value = infos["intermediate_reward"]
+    def _single_batch_info(infos, key):
+        if key not in infos:
+            raise RuntimeError(f"ALFWorld EXACT requires TextWorld info field: {key}")
+        raw_value = infos[key]
         if isinstance(raw_value, np.ndarray):
             if raw_value.size != 1:
-                raise RuntimeError("ALFWorld worker expected one intermediate reward")
+                raise RuntimeError(f"ALFWorld worker expected one {key} value")
             raw_value = raw_value.reshape(-1)[0]
         elif isinstance(raw_value, (list, tuple)):
             if len(raw_value) != 1:
-                raise RuntimeError("ALFWorld worker expected one intermediate reward")
+                raise RuntimeError(f"ALFWorld worker expected one {key} value")
             raw_value = raw_value[0]
-        if raw_value is None:
-            if at_reset:
-                # TextWorld's asynchronous Gym stack can expose None before the
-                # first transition. No process reward has accrued at reset.
-                return 0.0
-            raise RuntimeError("TextWorld intermediate_reward is unavailable after step")
-        value = float(raw_value)
-        if not np.isfinite(value) or value not in {-1.0, 0.0, 1.0}:
-            raise RuntimeError(
-                "TextWorld intermediate_reward must be a finite value in {-1, 0, 1}"
-            )
-        return value
+        return raw_value
 
-    def _refresh_exact_snapshot(self):
+    def _refresh_exact_snapshot(self, infos):
+        from recipe.exact.alfworld_verifier import evaluate_alfworld_goal_factors
         from recipe.exact.env_probes import alfworld_factor_snapshot
 
-        snapshot = alfworld_factor_snapshot(self._exact_cumulative_intermediate_reward)
+        if self._exact_verifier_spec is None:
+            raise RuntimeError("ALFWorld verifier spec is unavailable before reset")
+        facts = self._single_batch_info(infos, "facts")
+        won = self._single_batch_info(infos, "won")
+        goal_factors = evaluate_alfworld_goal_factors(
+            self._exact_verifier_spec,
+            facts,
+            won,
+        )
+        snapshot = alfworld_factor_snapshot(
+            self._exact_verifier_spec.task_type,
+            goal_factors,
+            won,
+        )
         if self._exact_snapshot is not None:
             if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
                 raise RuntimeError("ALFWorld factor schema changed within a trajectory")
@@ -108,8 +109,7 @@ class AlfworldWorker:
         actions = [action] 
         
         obs, scores, dones, infos = self.env.step(actions)
-        self._exact_cumulative_intermediate_reward += self._exact_intermediate_reward(infos)
-        self._refresh_exact_snapshot()
+        self._refresh_exact_snapshot(infos)
         return obs, scores, dones, infos
     
     def reset(self):
@@ -117,12 +117,12 @@ class AlfworldWorker:
         if self.deterministic_reset:
             self.env.seed(self.seed)
         obs, infos = self.env.reset()
-        initial_intermediate_reward = self._exact_intermediate_reward(infos, at_reset=True)
-        if initial_intermediate_reward != 0.0:
-            raise RuntimeError("TextWorld intermediate_reward must be zero at reset")
-        self._exact_cumulative_intermediate_reward = 0.0
+        from recipe.exact.alfworld_verifier import load_alfworld_verifier_spec
+
+        gamefile = self._single_batch_info(infos, "extra.gamefile")
+        self._exact_verifier_spec = load_alfworld_verifier_spec(gamefile)
         self._exact_snapshot = None
-        self._refresh_exact_snapshot()
+        self._refresh_exact_snapshot(infos)
         return obs, infos
     
     def getobs(self):

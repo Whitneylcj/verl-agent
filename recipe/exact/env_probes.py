@@ -6,6 +6,11 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
+from recipe.exact.alfworld_verifier import (
+    ALFWORLD_TASK_FACTOR_IDS,
+    ALFWORLD_TASK_FACTOR_READ_SETS,
+)
+
 GYM_SOKOBAN_SOURCE_REVISION = "mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89"
 ALFWORLD_SOURCE_REVISION = "alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e"
 TEXTWORLD_SOURCE_REVISION = "microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2"
@@ -103,20 +108,56 @@ def sokoban_factor_snapshot(
     )
 
 
-def alfworld_factor_snapshot(cumulative_intermediate_reward: Any) -> dict[str, Any]:
-    """Expose TextWorld's official cumulative intermediate reward."""
+def alfworld_factor_snapshot(
+    task_type: str,
+    goal_factors: Mapping[str, Any],
+    won: Any,
+) -> dict[str, Any]:
+    """Expose the official terminal result and task-specific PDDL goal conditions."""
 
-    value = float(cumulative_intermediate_reward)
-    if not np.isfinite(value):
-        raise ValueError("ALFWorld cumulative intermediate reward must be finite")
-    channel_id = "textworld_intermediate_reward_cumulative"
+    if task_type not in ALFWORLD_TASK_FACTOR_IDS:
+        raise ValueError(f"unsupported ALFWorld verifier task type: {task_type}")
+    process_factor_ids = ALFWORLD_TASK_FACTOR_IDS[task_type]
+    missing = set(process_factor_ids) - set(goal_factors)
+    extra = set(goal_factors) - set(process_factor_ids)
+    if missing or extra:
+        raise ValueError(f"ALFWorld goal factors do not match the task schema; missing={sorted(missing)}, extra={sorted(extra)}")
+    process_values = np.asarray(
+        [goal_factors[factor_id] for factor_id in process_factor_ids],
+        dtype=np.float64,
+    )
+    won_value = float(won)
+    if not np.all(np.isfinite(process_values)) or not np.all(np.isin(process_values, (0.0, 1.0))) or not np.isfinite(won_value) or won_value not in {0.0, 1.0}:
+        raise ValueError("ALFWorld official verifier values must be binary")
+
+    terminal_factor_id = "terminal_success"
+    factor_ids = (terminal_factor_id, *process_factor_ids)
+    task_read_sets = ALFWORLD_TASK_FACTOR_READ_SETS[task_type]
+    if set(task_read_sets) != set(process_factor_ids):
+        raise RuntimeError("ALFWorld verifier read-set schema drifted from its factors")
+    read_sets = {
+        terminal_factor_id: tuple(
+            sorted(
+                {
+                    resource
+                    for factor_id in process_factor_ids
+                    for resource in task_read_sets[factor_id]
+                }
+            )
+        ),
+        **{factor_id: task_read_sets[factor_id] for factor_id in process_factor_ids},
+    }
+    process_weight = 1.0 / len(process_factor_ids)
     return _snapshot(
-        (channel_id,),
-        (value,),
-        {channel_id: ("alfworld.textworld.quest_progression",)},
-        "exact.alfworld.textworld.intermediate_reward.v1",
-        channel_roles={channel_id: "process_verifier"},
-        potential_weights=(1.0,),
+        factor_ids,
+        (won_value, *process_values.tolist()),
+        read_sets,
+        "exact.alfworld.pddl_goal_conditions.v1",
+        channel_roles={
+            terminal_factor_id: "return_component",
+            **{factor_id: "process_verifier" for factor_id in process_factor_ids},
+        },
+        potential_weights=(10.0, *(process_weight for _ in process_factor_ids)),
         source_revision=f"{ALFWORLD_SOURCE_REVISION};{TEXTWORLD_SOURCE_REVISION}",
     )
 
