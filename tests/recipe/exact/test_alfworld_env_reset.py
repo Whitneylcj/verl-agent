@@ -16,7 +16,7 @@ class _FakeBatchEnv:
 
     def reset(self):
         return ["observation"], {
-            "intermediate_reward": [0.0],
+            "intermediate_reward": [None],
             "won": [False],
         }
 
@@ -83,6 +83,36 @@ def test_worker_accumulates_official_intermediate_reward_and_resets():
     assert worker.exact_credit_snapshot()["values"] == (0.0,)
     worker.reset()
     assert worker.exact_credit_snapshot()["values"] == (0.0,)
+
+
+def test_worker_accepts_explicit_zero_intermediate_reward_on_reset():
+    worker, batch_env = _worker(deterministic_reset=False)
+    original_reset = batch_env.reset
+
+    def reset_with_explicit_zero():
+        observation, infos = original_reset()
+        infos["intermediate_reward"] = [0.0]
+        return observation, infos
+
+    batch_env.reset = reset_with_explicit_zero
+    worker.reset()
+
+    assert worker.exact_credit_snapshot()["values"] == (0.0,)
+
+
+def test_worker_rejects_nonzero_intermediate_reward_on_reset():
+    worker, batch_env = _worker(deterministic_reset=False)
+    original_reset = batch_env.reset
+
+    def reset_with_nonzero_reward():
+        observation, infos = original_reset()
+        infos["intermediate_reward"] = [1.0]
+        return observation, infos
+
+    batch_env.reset = reset_with_nonzero_reward
+
+    with pytest.raises(RuntimeError, match="reset must expose"):
+        worker.reset()
 
 
 def test_worker_rejects_invalid_official_intermediate_reward():

@@ -84,7 +84,18 @@ class AlfworldWorker:
     def _refresh_exact_snapshot(self, infos, *, reset=False):
         from recipe.exact.env_probes import alfworld_intermediate_reward_snapshot
 
-        step_reward = float(self._single_batch_info(infos, "intermediate_reward"))
+        raw_step_reward = self._single_batch_info(infos, "intermediate_reward")
+        if reset and raw_step_reward is None:
+            # TextWorld's reset GameState has no preceding transition, so its
+            # requested intermediate_reward is officially exposed as None.
+            step_reward = 0.0
+        else:
+            try:
+                step_reward = float(raw_step_reward)
+            except (TypeError, ValueError) as error:
+                raise RuntimeError(
+                    "ALFWorld TextWorld intermediate_reward must be numeric after step"
+                ) from error
         if not np.isfinite(step_reward) or step_reward not in {-1.0, 0.0, 1.0}:
             raise RuntimeError(
                 "ALFWorld TextWorld intermediate_reward must be one of -1, 0, or 1"
