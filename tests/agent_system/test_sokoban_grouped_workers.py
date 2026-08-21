@@ -34,7 +34,8 @@ def grouped_env(monkeypatch):
     env.env_num = 2
     env.num_processes = 4
     env.workers = [_fake_worker(0), _fake_worker(1)]
-    return env
+    yield env
+    env.workers = []
 
 
 def test_grouped_workers_preserve_flat_trajectory_order(grouped_env):
