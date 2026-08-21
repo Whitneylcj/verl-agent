@@ -44,9 +44,15 @@ factor is part of the default schema. The adapter is source-locked to
 `mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89`.
 
 The ALFWorld snapshot accumulates TextWorld's official per-step
-`intermediate_reward` signal in one process-verifier channel. Reset must expose
-zero, and every later step must be one of `-1`, `0`, or `+1`; each checkpoint
-delta is checked against that native signal. The process channel closes to zero,
+`intermediate_reward` definition in one process-verifier channel. Inform7 games
+use the native numeric field. ALFWorld's current `.tw-pddl` games leave that
+field unset, so the adapter requests TextWorld PddlEnv's own replanned
+`policy_commands` and applies the same winning-policy length-sign definition
+used by TextWorld's native implementation. Reset is normalized to zero, and
+every later step must be one of `-1`, `0`, or `+1`; the integration probe checks
+each checkpoint delta against the independent policy-length calculation. This
+planner compatibility path adds CPU cost but does not add environment steps or
+read PDDL facts. The process channel closes to zero,
 while ALFWorld's existing binary `10 * won` episode return remains entirely in
 the opaque target. EXACT does not read `facts`, `traj_data.json`, or a handwritten
 PDDL goal decomposition. Verifier values are training-only and are never added
@@ -92,11 +98,12 @@ python -m recipe.exact.probe_alfworld_verifier
 ```
 
 The ALFWorld integration probe privately follows official expert plans over a
-configurable sample of TextWorld games. It checks that every snapshot delta is
-the official `intermediate_reward`, that the process channel has zero target
-mass, and that the binary `10 * won` episode return remains opaque and exactly
-conserved. Its output contains only aggregate signal diagnostics, not benchmark
-paths, observations, or actions.
+configurable sample of TextWorld games. It checks that every snapshot delta
+matches either TextWorld's native signal or its PddlEnv winning-policy progress
+definition, that the process channel has zero target mass, and that the binary
+`10 * won` episode return remains opaque and exactly conserved. Its output
+contains only aggregate signal diagnostics, not benchmark paths, observations,
+or actions.
 
 The launcher defaults Sokoban, ALFWorld, and WebShop to `EXACT_MODE=temporal`
 (Exact-T), and AppWorld to `EXACT_MODE=graph` (Exact-G). Set `EXACT_MODE`

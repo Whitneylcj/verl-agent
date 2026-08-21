@@ -80,6 +80,9 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
         total_reward = 0.0
         done = False
         intermediate_rewards = []
+        previous_policy_length = len(
+            _single(infos["policy_commands"], "policy commands")
+        )
 
         for step_count in range(1, max_steps + 1):
             plan = _single(infos["extra.expert_plan"], "expert plan")
@@ -93,11 +96,26 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
             _, _, dones, infos = worker.step(action)
             won = bool(_single(infos["won"], "won"))
             done = bool(_single(dones, "done"))
-            intermediate_reward = float(
-                _single(infos["intermediate_reward"], "intermediate reward")
+            current_policy_length = len(
+                _single(infos["policy_commands"], "policy commands")
             )
+            lost = bool(_single(infos["lost"], "lost"))
+            if won:
+                expected_intermediate_reward = 1.0
+            elif lost:
+                expected_intermediate_reward = -1.0
+            else:
+                policy_delta = previous_policy_length - current_policy_length
+                expected_intermediate_reward = float(
+                    (policy_delta > 0) - (policy_delta < 0)
+                )
+            intermediate_reward = worker.exact_last_intermediate_reward()
             if intermediate_reward not in {-1.0, 0.0, 1.0}:
                 raise RuntimeError("ALFWorld emitted an invalid intermediate_reward")
+            if intermediate_reward != expected_intermediate_reward:
+                raise RuntimeError(
+                    "ALFWorld verifier differs from TextWorld winning-policy progress"
+                )
             total_reward += 10.0 * float(won)
             snapshot = worker.exact_credit_snapshot()
             if snapshot["factor_ids"] != factor_ids:
@@ -108,6 +126,7 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
                     "ALFWorld checkpoint delta differs from official intermediate_reward"
                 )
             intermediate_rewards.append(intermediate_reward)
+            previous_policy_length = current_policy_length
             snapshots.append(snapshot)
             if done:
                 break

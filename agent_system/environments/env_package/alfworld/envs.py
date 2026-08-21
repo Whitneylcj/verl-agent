@@ -64,6 +64,8 @@ class AlfworldWorker:
         self.deterministic_reset = deterministic_reset
         self.env.seed(seed)
         self._exact_cumulative_intermediate_reward = 0.0
+        self._exact_previous_policy_length = None
+        self._exact_last_intermediate_reward = None
         self._exact_snapshot = None
 
     @staticmethod
@@ -85,10 +87,27 @@ class AlfworldWorker:
         from recipe.exact.env_probes import alfworld_intermediate_reward_snapshot
 
         raw_step_reward = self._single_batch_info(infos, "intermediate_reward")
-        if reset and raw_step_reward is None:
-            # TextWorld's reset GameState has no preceding transition, so its
-            # requested intermediate_reward is officially exposed as None.
-            step_reward = 0.0
+        raw_policy = self._single_batch_info(infos, "policy_commands")
+        if not isinstance(raw_policy, (list, tuple)):
+            raise RuntimeError("ALFWorld TextWorld policy_commands must be a sequence")
+        current_policy_length = len(raw_policy)
+        if raw_step_reward is None:
+            # TextWorld 1.7's PddlEnv does not populate intermediate_reward.
+            # Reproduce TextWorld's official definition from its own replanned
+            # winning policy instead of inspecting PDDL facts or goal clauses.
+            won = bool(self._single_batch_info(infos, "won"))
+            lost = bool(self._single_batch_info(infos, "lost"))
+            if reset:
+                step_reward = 0.0
+            elif won:
+                step_reward = 1.0
+            elif lost:
+                step_reward = -1.0
+            elif self._exact_previous_policy_length is None:
+                raise RuntimeError("ALFWorld PDDL policy baseline is missing after reset")
+            else:
+                policy_delta = self._exact_previous_policy_length - current_policy_length
+                step_reward = float((policy_delta > 0) - (policy_delta < 0))
         else:
             try:
                 step_reward = float(raw_step_reward)
@@ -108,6 +127,8 @@ class AlfworldWorker:
             self._exact_cumulative_intermediate_reward = 0.0
         else:
             self._exact_cumulative_intermediate_reward += step_reward
+        self._exact_previous_policy_length = current_policy_length
+        self._exact_last_intermediate_reward = step_reward
         self._exact_snapshot = alfworld_intermediate_reward_snapshot(
             self._exact_cumulative_intermediate_reward
         )
@@ -139,6 +160,11 @@ class AlfworldWorker:
         if self._exact_snapshot is None:
             raise RuntimeError("ALFWorld exact probe requested before reset")
         return self._exact_snapshot
+
+    def exact_last_intermediate_reward(self):
+        if self._exact_last_intermediate_reward is None:
+            raise RuntimeError("ALFWorld intermediate reward requested before reset")
+        return self._exact_last_intermediate_reward
 
 class AlfworldEnvs(gym.Env):
     def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs=None):

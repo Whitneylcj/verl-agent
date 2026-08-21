@@ -251,9 +251,11 @@ class AlfredTWEnv:
         # Register a new Gym environment.
         request_infos = textworld.EnvInfos(
             won=True,
+            lost=True,
             admissible_commands=True,
             facts=True,
             intermediate_reward=True,
+            policy_commands=True,
             extras=["gamefile"],
         )
         expert_type = self.config["env"]["expert_type"]

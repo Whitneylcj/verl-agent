@@ -10,19 +10,24 @@ class _FakeBatchEnv:
     def __init__(self):
         self.seed_calls = []
         self.step_rewards = []
+        self.policy_length = 3
 
     def seed(self, seed):
         self.seed_calls.append(seed)
 
     def reset(self):
+        self.policy_length = 3
         return ["observation"], {
             "intermediate_reward": [None],
             "won": [False],
+            "lost": [False],
+            "policy_commands": [[f"action-{index}" for index in range(self.policy_length)]],
         }
 
     def step(self, actions):
         assert actions == ["look"]
         intermediate_reward, won = self.step_rewards.pop(0)
+        self.policy_length = max(0, self.policy_length - 1)
         return (
             ["observation"],
             [float(won)],
@@ -30,6 +35,8 @@ class _FakeBatchEnv:
             {
                 "intermediate_reward": [intermediate_reward],
                 "won": [won],
+                "lost": [False],
+                "policy_commands": [[f"action-{index}" for index in range(self.policy_length)]],
             },
         )
 
@@ -115,6 +122,21 @@ def test_worker_rejects_nonzero_intermediate_reward_on_reset():
         worker.reset()
 
 
+def test_worker_derives_pddl_reward_from_official_policy_progress():
+    worker, batch_env = _worker(deterministic_reset=False)
+    batch_env.step_rewards = [(None, False), (None, False), (None, True)]
+    worker.reset()
+
+    worker.step("look")
+    assert worker.exact_last_intermediate_reward() == 1.0
+    assert worker.exact_credit_snapshot()["values"] == (1.0,)
+    worker.step("look")
+    assert worker.exact_last_intermediate_reward() == 1.0
+    worker.step("look")
+    assert worker.exact_last_intermediate_reward() == 1.0
+    assert worker.exact_credit_snapshot()["values"] == (3.0,)
+
+
 def test_worker_rejects_invalid_official_intermediate_reward():
     worker, batch_env = _worker(deterministic_reset=False)
     batch_env.step_rewards = [(0.5, False)]
@@ -130,7 +152,11 @@ def test_worker_requires_official_intermediate_reward_after_step():
 
     def step_without_facts(actions):
         assert actions == ["look"]
-        return ["observation"], [0.0], [False], {"won": [False]}
+        return ["observation"], [0.0], [False], {
+            "won": [False],
+            "lost": [False],
+            "policy_commands": [[]],
+        }
 
     batch_env.step = step_without_facts
     with pytest.raises(RuntimeError, match="info field: intermediate_reward"):
