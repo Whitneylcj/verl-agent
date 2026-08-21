@@ -237,6 +237,7 @@ def write_manifest(
             ("experiment", "conservation_schema"),
             ("experiment", "model_path"),
             ("experiment", "seed"),
+            ("experiment", "prompt_profile"),
         )
         mismatches = [".".join(path) for path in invariant_paths if existing[path[0]][path[1]] != manifest[path[0]][path[1]]]
         if existing.get("hydra_overrides_sha256") != manifest.get("hydra_overrides_sha256"):
@@ -261,6 +262,7 @@ def main() -> int:
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--seed", required=True, type=int)
     parser.add_argument("--loss-agg-mode", required=True)
+    parser.add_argument("--prompt-profile", required=True)
     parser.add_argument("--override", action="append", default=[])
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
@@ -274,6 +276,7 @@ def main() -> int:
         "model_path": args.model_path,
         "seed": args.seed,
         "loss_agg_mode": args.loss_agg_mode,
+        "prompt_profile": args.prompt_profile,
     }
     manifest = build_manifest(
         repo_root=args.repo_root,

@@ -63,7 +63,7 @@ class AlfworldWorker:
         self.seed = seed
         self.deterministic_reset = deterministic_reset
         self.env.seed(seed)
-        self._exact_verifier_spec = None
+        self._exact_cumulative_intermediate_reward = 0.0
         self._exact_snapshot = None
 
     @staticmethod
@@ -81,28 +81,25 @@ class AlfworldWorker:
             raw_value = raw_value[0]
         return raw_value
 
-    def _refresh_exact_snapshot(self, infos):
-        from recipe.exact.alfworld_verifier import evaluate_alfworld_goal_factors
-        from recipe.exact.env_probes import alfworld_factor_snapshot
+    def _refresh_exact_snapshot(self, infos, *, reset=False):
+        from recipe.exact.env_probes import alfworld_intermediate_reward_snapshot
 
-        if self._exact_verifier_spec is None:
-            raise RuntimeError("ALFWorld verifier spec is unavailable before reset")
-        facts = self._single_batch_info(infos, "facts")
-        won = self._single_batch_info(infos, "won")
-        goal_factors = evaluate_alfworld_goal_factors(
-            self._exact_verifier_spec,
-            facts,
-            won,
+        step_reward = float(self._single_batch_info(infos, "intermediate_reward"))
+        if not np.isfinite(step_reward) or step_reward not in {-1.0, 0.0, 1.0}:
+            raise RuntimeError(
+                "ALFWorld TextWorld intermediate_reward must be one of -1, 0, or 1"
+            )
+        if reset:
+            if step_reward != 0.0:
+                raise RuntimeError(
+                    "ALFWorld reset must expose intermediate_reward == 0"
+                )
+            self._exact_cumulative_intermediate_reward = 0.0
+        else:
+            self._exact_cumulative_intermediate_reward += step_reward
+        self._exact_snapshot = alfworld_intermediate_reward_snapshot(
+            self._exact_cumulative_intermediate_reward
         )
-        snapshot = alfworld_factor_snapshot(
-            self._exact_verifier_spec.task_type,
-            goal_factors,
-            won,
-        )
-        if self._exact_snapshot is not None:
-            if snapshot["factor_ids"] != self._exact_snapshot["factor_ids"]:
-                raise RuntimeError("ALFWorld factor schema changed within a trajectory")
-        self._exact_snapshot = snapshot
     
     def step(self, action):
         """Execute a step in the environment"""
@@ -117,12 +114,8 @@ class AlfworldWorker:
         if self.deterministic_reset:
             self.env.seed(self.seed)
         obs, infos = self.env.reset()
-        from recipe.exact.alfworld_verifier import load_alfworld_verifier_spec
-
-        gamefile = self._single_batch_info(infos, "extra.gamefile")
-        self._exact_verifier_spec = load_alfworld_verifier_spec(gamefile)
         self._exact_snapshot = None
-        self._refresh_exact_snapshot(infos)
+        self._refresh_exact_snapshot(infos, reset=True)
         return obs, infos
     
     def getobs(self):

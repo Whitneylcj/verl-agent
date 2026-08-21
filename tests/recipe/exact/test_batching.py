@@ -1,7 +1,10 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
+
+pytest.importorskip("ray")
 
 from agent_system.multi_turn_rollout.utils import adjust_batch
 from verl import DataProto

@@ -13,4 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from agent_system.environments.env_manager import EnvironmentManagerBase, make_envs
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent_system.environments.env_manager import EnvironmentManagerBase, make_envs
+
+__all__ = ["EnvironmentManagerBase", "make_envs"]
+
+
+def __getattr__(name):
+    if name in __all__:
+        from agent_system.environments import env_manager
+
+        return getattr(env_manager, name)
+    raise AttributeError(name)

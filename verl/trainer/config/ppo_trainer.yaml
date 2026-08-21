@@ -332,6 +332,8 @@ ray_init:
 
 env:
   env_name: alfworld/AlfredTWEnv
+  # Model-specific guidance must be enabled explicitly and matched across runs.
+  prompt_profile: benchmark
   seed: 0
   max_steps: 50
   history_length: 2
@@ -359,6 +361,6 @@ env:
     # Use held-out development tasks while tuning. Reserve test splits for the
     # locked final evaluation.
     validation_split: dev
-    # json_api compiles one typed JSON action into one API call. The legacy
-    # python mode remains available only for baseline compatibility.
-    action_mode: json_api
+    # The benchmark profile preserves verl-agent's upstream Python action mode.
+    # EXACT AppWorld launchers explicitly select json_api and appworld_exact_json.
+    action_mode: python

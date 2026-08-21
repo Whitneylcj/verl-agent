@@ -277,14 +277,17 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         for i in range(len(text_obs)):
             # exclude 'help' in admissible_actions[i]
             reformatted_admissible_actions = "\n ".join(f"'{s}'" for s in admissible_actions[i] if s != 'help')
+            guided = self.prompt_profile == "qwen_small_guided"
 
             if init or self.config.env.history_length <= 0:
-                obs = ALFWORLD_TEMPLATE_NO_HIS.format(
+                template = ALFWORLD_QWEN_SMALL_GUIDED_TEMPLATE_NO_HIS if guided else ALFWORLD_TEMPLATE_NO_HIS
+                obs = template.format(
                     current_observation=text_obs[i],
                     admissible_actions=reformatted_admissible_actions
                 )
             else:
-                obs = ALFWORLD_TEMPLATE.format(
+                template = ALFWORLD_QWEN_SMALL_GUIDED_TEMPLATE if guided else ALFWORLD_TEMPLATE
+                obs = template.format(
                     task_description=self.tasks[i],
                     step_count=len(self.memory[i]),
                     history_length=valid_lens[i],
@@ -311,9 +314,6 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
                 if gamefile:
                     self._process_gamefile(gamefile, won_value, success)
                 return  # Exit after finding the first active mask
-
-    def exact_credit_snapshots(self):
-        return self.envs.exact_credit_snapshots()
 
     def _process_gamefile(self, gamefile, won_value, success):
         tasks = [
@@ -417,18 +417,38 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
                     action_key="action")
             
         for i in range(len(infos)):
-            action_constraint = _sokoban_action_constraint(text_obs[i]) if text_obs is not None else ""
+            guided = self.prompt_profile == "qwen_small_guided"
+            action_constraint = (
+                _sokoban_action_constraint(text_obs[i])
+                if guided and text_obs is not None
+                else ""
+            )
             if init or self.config.env.history_length <= 0:
-                obs = SOKOBAN_VISUAL_TEMPLATE if self.is_multi_modal \
-                 else SOKOBAN_TEMPLATE_NO_HIS.format(
+                visual_template = (
+                    SOKOBAN_QWEN_SMALL_GUIDED_VISUAL_TEMPLATE
+                    if guided
+                    else SOKOBAN_VISUAL_TEMPLATE
+                )
+                text_template = (
+                    SOKOBAN_QWEN_SMALL_GUIDED_TEMPLATE_NO_HIS
+                    if guided
+                    else SOKOBAN_TEMPLATE_NO_HIS
+                )
+                obs = visual_template if self.is_multi_modal \
+                 else text_template.format(
                     current_observation=text_obs[i],
                 )
             else:
                 if self.is_multi_modal:
-                    obs = SOKOBAN_VISUAL_TEMPLATE
+                    obs = (
+                        SOKOBAN_QWEN_SMALL_GUIDED_VISUAL_TEMPLATE
+                        if guided
+                        else SOKOBAN_VISUAL_TEMPLATE
+                    )
                 else:
-                    loop_warning = self._loop_warning(i, text_obs[i])
-                    obs = SOKOBAN_TEMPLATE.format(
+                    loop_warning = self._loop_warning(i, text_obs[i]) if guided else ""
+                    template = SOKOBAN_QWEN_SMALL_GUIDED_TEMPLATE if guided else SOKOBAN_TEMPLATE
+                    obs = template.format(
                         step_count=len(self.memory[i]),
                         history_length=valid_lens[i],
                         action_history=memory_contexts[i],
@@ -456,10 +476,6 @@ class SokobanEnvironmentManager(EnvironmentManagerBase):
             f"The previous {action} action left the board unchanged. Do not choose {action} again this step; "
             "choose another action that moves the player or makes a legal box push."
         )
-
-    def exact_credit_snapshots(self):
-        return self.envs.exact_credit_snapshots()
-
 
 class GymCardEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
@@ -638,9 +654,6 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
                 success['webshop_task_score (not success_rate)'].append(score_value)
                 return
 
-    def exact_credit_snapshots(self):
-        return self.envs.exact_credit_snapshots()
-
 class AppWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
         self.memory = SimpleMemory()
@@ -685,15 +698,6 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
 
         return next_observations, rewards, dones, infos
 
-    def exact_credit_snapshots(self):
-        return self.envs.exact_credit_snapshots()
-
-    def exact_effect_schemas(self, snapshots):
-        schemas = self.envs.exact_effect_schemas()
-        if len(snapshots) != len(schemas):
-            raise ValueError("AppWorld snapshot/effect-schema batch size mismatch")
-        return schemas
-
     def resolve_exact_effect_schemas(
         self,
         schemas,
@@ -730,13 +734,20 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
         """
         postprocess_text_obs = []
         action_mode = self.config.env.appworld.action_mode
+        if self.prompt_profile == "benchmark" and action_mode != "python":
+            raise ValueError("AppWorld benchmark prompt profile requires env.appworld.action_mode=python")
+        if self.prompt_profile in {"appworld_exact_json", "qwen_small_guided"} and action_mode != "json_api":
+            raise ValueError(
+                f"AppWorld {self.prompt_profile} prompt profile requires env.appworld.action_mode=json_api"
+            )
         if init and self.supervisors is not None:
             for i in range(len(text_obs)):
-                template = (
-                    APPWORLD_JSON_API_TEMPLATE_NO_HIS
-                    if action_mode == "json_api"
-                    else APPWORLD_TEMPLATE_NO_HIS
-                )
+                if self.prompt_profile == "qwen_small_guided":
+                    template = APPWORLD_QWEN_SMALL_GUIDED_JSON_API_TEMPLATE_NO_HIS
+                elif self.prompt_profile == "appworld_exact_json":
+                    template = APPWORLD_JSON_API_TEMPLATE_NO_HIS
+                else:
+                    template = APPWORLD_TEMPLATE_NO_HIS
                 obs = template.format(
                         supervisor_first_name=self.supervisors[i]['first_name'],
                         supervisor_last_name=self.supervisors[i]['last_name'],
@@ -761,7 +772,12 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                 if len(action_history) > 10000:
                     action_history = "... " + action_history[-10000:]
 
-                template = APPWORLD_JSON_API_TEMPLATE if action_mode == "json_api" else APPWORLD_TEMPLATE
+                if self.prompt_profile == "qwen_small_guided":
+                    template = APPWORLD_QWEN_SMALL_GUIDED_JSON_API_TEMPLATE
+                elif self.prompt_profile == "appworld_exact_json":
+                    template = APPWORLD_JSON_API_TEMPLATE
+                else:
+                    template = APPWORLD_TEMPLATE
                 obs = template.format(
                         supervisor_first_name=self.supervisors[i]['first_name'],
                         supervisor_last_name=self.supervisors[i]['last_name'],
@@ -782,7 +798,7 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                                 supervisor_email=self.supervisors[i]["email"],
                                 supervisor_phone_number=self.supervisors[i]["phone_number"],
                             )
-                            if action_mode == "json_api"
+                            if self.prompt_profile == "qwen_small_guided"
                             else ""
                         ),
                     )

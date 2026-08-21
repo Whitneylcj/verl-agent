@@ -16,6 +16,7 @@ from recipe.exact.monitor import (
     summarize_validation_action_validity,
     summarize_validation_factor_progress,
 )
+from recipe.exact.trainer_hooks import ExactTrainerHooks
 
 
 class _Batch:
@@ -437,6 +438,18 @@ def test_observer_persists_redacted_trainer_failure(tmp_path):
     assert heartbeat["failure"]["type"] == "RuntimeError"
     assert "abc123" not in heartbeat["failure"]["message"]
     assert "jane@example.com" not in heartbeat["failure"]["message"]
+
+
+def test_trainer_hook_persists_exception_without_generic_trainer_state(tmp_path):
+    hook = object.__new__(ExactTrainerHooks)
+    hook.observer = ExactObserver(tmp_path)
+
+    hook.mark_failed(step=4, error=RuntimeError("synthetic trainer failure"))
+
+    heartbeat = json.loads((tmp_path / "heartbeat.json").read_text())
+    assert heartbeat["status"] == "failed"
+    assert heartbeat["step"] == 4
+    assert heartbeat["failure"]["type"] == "RuntimeError"
 
 
 def test_observer_preserves_update_metrics_when_later_validation_fails(tmp_path):

@@ -38,7 +38,13 @@ def test_sokoban_manager_separates_syntax_from_noop_execution():
 
 def test_sokoban_manager_warns_against_repeating_unchanged_action():
     envs = _FakeSokobanEnvs()
-    config = SimpleNamespace(env=SimpleNamespace(history_length=2))
+    config = SimpleNamespace(
+        env=SimpleNamespace(
+            env_name="Sokoban",
+            history_length=2,
+            prompt_profile="qwen_small_guided",
+        )
+    )
     manager = SokobanEnvironmentManager(envs, lambda actions: ([4], [1]), config)
     manager.memory.reset(batch_size=1)
     manager.memory.store({"text_obs": ["same board"], "action": ["Right"]})
@@ -67,7 +73,13 @@ def test_sokoban_legal_actions_are_inferred_without_stepping_environment():
 
 def test_sokoban_prompt_exposes_only_current_observation_constraints():
     envs = _FakeSokobanEnvs()
-    config = SimpleNamespace(env=SimpleNamespace(history_length=0))
+    config = SimpleNamespace(
+        env=SimpleNamespace(
+            env_name="Sokoban",
+            history_length=0,
+            prompt_profile="qwen_small_guided",
+        )
+    )
     manager = SokobanEnvironmentManager(envs, lambda actions: ([4], [1]), config)
     board = """
     # # # # #

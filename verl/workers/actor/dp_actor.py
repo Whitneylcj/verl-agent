@@ -18,7 +18,6 @@ Single Process Actor
 """
 
 import itertools
-import time
 import logging
 import os
 from typing import Tuple
@@ -36,8 +35,9 @@ from verl.utils.fsdp_utils import FSDPModule, fsdp2_clip_grad_norm_
 from verl.utils.py_functional import append_to_dict
 from verl.utils.seqlen_balancing import get_reverse_idx, rearrange_micro_batches
 from verl.utils.torch_functional import logprobs_from_logits
-from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad_and_slice_inputs, ulysses_pad
+from verl.utils.ulysses import gather_outpus_and_unpad, ulysses_pad, ulysses_pad_and_slice_inputs
 from verl.workers.actor import BasePPOActor
+from verl.workers.actor.update_contract import resolve_update_contract
 
 if is_cuda_available:
     from flash_attn.bert_padding import index_first_axis, pad_input, rearrange, unpad_input
@@ -320,16 +320,14 @@ class DataParallelPPOActor(BasePPOActor):
 
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         multi_turn = data.meta_info.get("multi_turn", False)
+        use_full_rollout_batch, regularizer_scale = resolve_update_contract(data.meta_info)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids", "old_log_probs", "advantages"]
-        if "exact_aux_loss_scale" in data.batch:
-            select_keys.append("exact_aux_loss_scale")
         if multi_turn:
             select_keys.append("loss_mask")
         if self.config.use_kl_loss:
             select_keys.append("ref_log_prob")
         batch = data.select(batch_keys=select_keys).batch
-        is_exact_objective = "exact_aux_loss_scale" in batch
         has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
 
         # Split to make minibatch iterator for updating the actor
@@ -337,12 +335,12 @@ class DataParallelPPOActor(BasePPOActor):
         if has_multi_modal_inputs:
             non_tensor_select_keys = ["multi_modal_inputs"]
             selected_data = data.select(select_keys, non_tensor_select_keys)
-            if is_exact_objective:
+            if use_full_rollout_batch:
                 dataloader = (selected_data,)
             else:
                 num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
                 dataloader = selected_data.chunk(num_mini_batches)
-        elif is_exact_objective:
+        elif use_full_rollout_batch:
             # EXACT's trajectory_scale is derived for the full rollout batch.
             # Accumulate every action row before one optimizer step so PPO
             # mini-batch boundaries cannot rescale the trajectory objective.
@@ -351,13 +349,17 @@ class DataParallelPPOActor(BasePPOActor):
             dataloader = batch.split(self.config.ppo_mini_batch_size)
 
         metrics = {}
+        if regularizer_scale != 1.0:
+            metrics["actor/regularizer_scale"] = regularizer_scale
         for epoch in range(self.config.ppo_epochs):
             for batch_idx, data in enumerate(dataloader):
                 # split batch into micro_batches
                 mini_batch = data
                 if has_multi_modal_inputs:
                     mini_batch_size = mini_batch.batch.batch_size[0]
-                    accumulation_batch_size = mini_batch_size if is_exact_objective else self.config.ppo_mini_batch_size
+                    accumulation_batch_size = mini_batch_size if use_full_rollout_batch else self.config.ppo_mini_batch_size
+                    if accumulation_batch_size % self.config.ppo_micro_batch_size_per_gpu != 0:
+                        raise ValueError(f"Actor update batch size must be divisible by ppo_micro_batch_size_per_gpu: {accumulation_batch_size} vs {self.config.ppo_micro_batch_size_per_gpu}")
                     self.gradient_accumulation = accumulation_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     num_micro_batches = mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
@@ -365,7 +367,9 @@ class DataParallelPPOActor(BasePPOActor):
                     max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
                     micro_batches, _ = rearrange_micro_batches(batch=mini_batch, max_token_len=max_token_len)
                 else:
-                    accumulation_batch_size = mini_batch.batch_size[0] if is_exact_objective else self.config.ppo_mini_batch_size
+                    accumulation_batch_size = mini_batch.batch_size[0] if use_full_rollout_batch else self.config.ppo_mini_batch_size
+                    if accumulation_batch_size % self.config.ppo_micro_batch_size_per_gpu != 0:
+                        raise ValueError(f"Actor update batch size must be divisible by ppo_micro_batch_size_per_gpu: {accumulation_batch_size} vs {self.config.ppo_micro_batch_size_per_gpu}")
                     self.gradient_accumulation = accumulation_batch_size // self.config.ppo_micro_batch_size_per_gpu
                     # split batch into micro_batches
                     micro_batches = mini_batch.split(self.config.ppo_micro_batch_size_per_gpu)
@@ -388,16 +392,6 @@ class DataParallelPPOActor(BasePPOActor):
 
                     old_log_prob = data["old_log_probs"]
                     advantages = data["advantages"]
-                    exact_aux_loss_scale = data.get("exact_aux_loss_scale")
-                    if exact_aux_loss_scale is None:
-                        aux_loss_scale = 1.0
-                    else:
-                        if not torch.allclose(
-                            exact_aux_loss_scale,
-                            exact_aux_loss_scale.reshape(-1)[0].expand_as(exact_aux_loss_scale),
-                        ):
-                            raise ValueError("EXACT auxiliary loss scale must be constant within a micro-batch")
-                        aux_loss_scale = exact_aux_loss_scale.reshape(-1)[0]
 
                     clip_ratio = self.config.clip_ratio
                     clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
@@ -411,7 +405,7 @@ class DataParallelPPOActor(BasePPOActor):
                     if entropy_coeff != 0:
                         calculate_entropy = True
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature, calculate_entropy=calculate_entropy)
-                    
+
                     loss_mode = self.config.policy_loss.get("loss_mode", "vanilla")
                     if loss_mode == "vanilla":
                         policy_loss_fn = compute_policy_loss
@@ -434,7 +428,7 @@ class DataParallelPPOActor(BasePPOActor):
 
                     if entropy_coeff != 0:
                         entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
-                        entropy_loss = entropy_loss * aux_loss_scale
+                        entropy_loss = entropy_loss * regularizer_scale
 
                         # compute policy loss
                         policy_loss = pg_loss - entropy_loss * entropy_coeff
@@ -446,17 +440,15 @@ class DataParallelPPOActor(BasePPOActor):
                         # compute kl loss
                         kld = kl_penalty(logprob=log_prob, ref_logprob=ref_log_prob, kl_penalty=self.config.kl_loss_type)
                         kl_loss = agg_loss(loss_mat=kld, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
-                        kl_loss = kl_loss * aux_loss_scale
+                        kl_loss = kl_loss * regularizer_scale
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics["actor/kl_loss"] = kl_loss.detach().item()
                         metrics["actor/kl_coef"] = self.config.kl_loss_coef
-                        if exact_aux_loss_scale is not None:
-                            metrics["actor/exact_aux_loss_scale"] = aux_loss_scale.detach().item()
 
                     if self.config.use_dynamic_bsz:
                         # relative to the dynamic bsz
-                        normalization_batch_size = batch.batch_size[0] if is_exact_objective else self.config.ppo_mini_batch_size
+                        normalization_batch_size = batch.batch_size[0] if use_full_rollout_batch else self.config.ppo_mini_batch_size
                         loss = policy_loss * (len(data) / normalization_batch_size)
                     else:
                         loss = policy_loss / self.gradient_accumulation

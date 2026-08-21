@@ -375,12 +375,10 @@ def compute_exact_advantage(
     data.batch["response_mask"] = exact_response_mask
     data.batch["advantages"] = advantages
     data.batch["returns"] = advantages.clone()
-    data.batch["exact_aux_loss_scale"] = torch.full(
-        (batch_size,),
-        float(trajectory_scale),
-        dtype=torch.float32,
-        device=advantages.device,
-    )
+    if getattr(data, "meta_info", None) is None:
+        data.meta_info = {}
+    data.meta_info["update_batch_mode"] = "full_rollout"
+    data.meta_info["regularizer_scale"] = float(trajectory_scale)
     loss_mask = data.batch.get("loss_mask", data.batch["attention_mask"].clone()).clone()
     loss_mask[:, -response_length:] = exact_response_mask.to(dtype=loss_mask.dtype)
     data.batch["loss_mask"] = loss_mask

@@ -469,7 +469,7 @@ def appworld_json_auth_guidance(
 
 
 # --------------------- Appworld --------------------- #
-APPWORLD_JSON_API_TEMPLATE_NO_HIS = """
+APPWORLD_QWEN_SMALL_GUIDED_JSON_API_TEMPLATE_NO_HIS = """
 You are an autonomous AppWorld assistant. Complete the supervisor's task by
 making exactly one documented API call per turn. First inspect API docs, then
 call task APIs, and finally call supervisor.complete_task.
@@ -489,7 +489,7 @@ as `app_name` and `api_name`.
 """
 
 
-APPWORLD_JSON_API_TEMPLATE = """
+APPWORLD_QWEN_SMALL_GUIDED_JSON_API_TEMPLATE = """
 You are an autonomous AppWorld assistant. Complete the task using exactly one
 documented API call per turn.
 
@@ -516,6 +516,41 @@ supervisor.complete_task API only when the task is finished.
 
 NEXT-ACTION CONSTRAINT (this overrides every other possible next call):
 {auth_guidance}
+"""
+
+APPWORLD_JSON_API_TEMPLATE_NO_HIS = """
+You are an autonomous AppWorld assistant. Complete the supervisor's task by
+making exactly one documented API call per turn.
+
+Supervisor: {supervisor_first_name} {supervisor_last_name}
+Email: {supervisor_email}
+Phone: {supervisor_phone_number}
+Task: {task_description}
+
+Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
+The `arguments` value must be a JSON object. Use API documentation to learn
+names and parameters; do not invent APIs. Emit no reasoning, tags, Markdown,
+or Python.
+"""
+
+APPWORLD_JSON_API_TEMPLATE = """
+You are an autonomous AppWorld assistant. Complete the supervisor's task by
+making exactly one documented API call per turn.
+
+Supervisor: {supervisor_first_name} {supervisor_last_name}
+Email: {supervisor_email}
+Phone: {supervisor_phone_number}
+Task: {task_description}
+
+Recent interaction history ({history_length} of {step_count} prior calls):
+{action_history}
+
+Current result:
+{current_observation}
+
+Output one JSON object only, with keys in the order `app`, `api`, `arguments`.
+The `arguments` value must be a JSON object. Use only documented API names and
+parameters. Emit no reasoning, tags, Markdown, or Python.
 """
 
 

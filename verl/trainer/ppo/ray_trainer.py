@@ -43,6 +43,7 @@ from verl.single_controller.base import Worker
 from verl.single_controller.ray import RayClassWithInitArgs, RayResourcePool, RayWorkerGroup
 from verl.single_controller.ray.base import create_colocated_worker_cls
 from verl.trainer.ppo import core_algos
+from verl.trainer.ppo.checkpoint_utils import save_checkpoint_if_needed
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
@@ -464,25 +465,21 @@ class RayPPOTrainer:
         else:
             raise NotImplementedError
 
-        self.exact_alpha_controller = None
+        self._exact_hooks = None
+        exact_config = self.config.algorithm.get("exact", {})
+        monitor_config = exact_config.get("monitor", {}) if exact_config is not None else {}
+        diagnostics_requested = any(
+            self.config.trainer.get(path_key, None)
+            for path_key in ("rollout_data_dir", "validation_data_dir")
+        )
         if (
             self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT
-            and self.config.algorithm.exact.mode == "graph_cv"
+            or monitor_config.get("enabled", False)
+            or diagnostics_requested
         ):
-            from recipe.exact.core_exact import DelayedAlphaController
+            from recipe.exact.trainer_hooks import ExactTrainerHooks
 
-            environment_bucket = str(self.config.env.env_name).split("/")[0].lower()
-            bucket_names = (
-                ("appworld.selector", "appworld.arguments")
-                if environment_bucket == "appworld"
-                else (environment_bucket,)
-            )
-            cv_config = self.config.algorithm.exact.cv
-            self.exact_alpha_controller = DelayedAlphaController(
-                bucket_names,
-                ridge=cv_config.ridge,
-                max_abs_alpha=cv_config.max_abs_alpha,
-            )
+            self._exact_hooks = ExactTrainerHooks(self.config)
 
         self._validate_config()
         self._create_dataloader(train_dataset, val_dataset, collate_fn, train_sampler)
@@ -846,14 +843,9 @@ class RayPPOTrainer:
 
         validation_data_dir = self.config.trainer.get("validation_data_dir", None)
         if validation_data_dir:
-            exact_config = self.config.algorithm.get("exact", {})
-            monitor_config = exact_config.get("monitor", {}) if exact_config is not None else {}
-            if monitor_config.get("redact_text", True):
-                from recipe.exact.monitor import redact_rollout_text
-
-                max_text_chars = monitor_config.get("max_text_chars", 20_000)
-                sample_inputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in sample_inputs]
-                sample_outputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in sample_outputs]
+            if self._exact_hooks is not None:
+                sample_inputs = self._exact_hooks.redact_texts(sample_inputs)
+                sample_outputs = self._exact_hooks.redact_texts(sample_outputs)
             self._dump_generations(
                 inputs=sample_inputs,
                 outputs=sample_outputs,
@@ -901,27 +893,14 @@ class RayPPOTrainer:
         for k, v in success_rate.items():
             metric_dict[f'val/{k}'] = v
 
-        from recipe.exact.monitor import (
-            summarize_appworld_validation_actions,
-            summarize_validation_action_validity,
-            summarize_validation_factor_progress,
-        )
-
-        metric_dict.update(summarize_validation_action_validity(validation_action_validity))
-        metric_dict.update(
-            summarize_validation_factor_progress(
-                validation_factor_snapshots["exact_factor_pre"],
-                validation_factor_snapshots["exact_factor_post"],
-                traj_uids,
-            )
-        )
-        if "appworld" in self.config.env.env_name.lower() and validation_action_validity["is_action_execution_valid"]:
-            execution_valid = np.concatenate(validation_action_validity["is_action_execution_valid"], axis=0)
+        if self._exact_hooks is not None:
             metric_dict.update(
-                summarize_appworld_validation_actions(
-                    sample_outputs,
-                    traj_uids,
-                    execution_valid,
+                self._exact_hooks.validation_metrics(
+                    action_validity=validation_action_validity,
+                    factor_snapshots=validation_factor_snapshots,
+                    trajectory_ids=traj_uids,
+                    action_texts=sample_outputs,
+                    env_name=self.config.env.env_name,
                 )
             )
 
@@ -1044,9 +1023,9 @@ class RayPPOTrainer:
             },
             os.path.join(local_global_step_folder, "trainer_budget.pt"),
         )
-        if self.exact_alpha_controller is not None:
+        if self._exact_hooks is not None and self._exact_hooks.requires_cv_checkpoint:
             exact_cv_path = os.path.join(local_global_step_folder, "exact_cv.pt")
-            torch.save(dict(self.exact_alpha_controller.state_dict()), exact_cv_path)
+            torch.save(self._exact_hooks.cv_state_dict(), exact_cv_path)
 
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt")
@@ -1120,13 +1099,11 @@ class RayPPOTrainer:
                 "budgeted training cannot resume without trainer_budget.pt: "
                 f"{global_step_folder}"
             )
-        if self.exact_alpha_controller is not None:
+        if self._exact_hooks is not None and self._exact_hooks.requires_cv_checkpoint:
             exact_cv_path = os.path.join(global_step_folder, "exact_cv.pt")
             if not os.path.exists(exact_cv_path):
                 raise FileNotFoundError(f"EXACT Graph-CV checkpoint state is missing: {exact_cv_path}")
-            self.exact_alpha_controller.load_state_dict(
-                torch.load(exact_cv_path, weights_only=False)
-            )
+            self._exact_hooks.load_cv_state_dict(torch.load(exact_cv_path, weights_only=False))
 
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen"):
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""
@@ -1182,18 +1159,11 @@ class RayPPOTrainer:
         try:
             return self._fit_impl()
         except Exception as error:
-            run_observer = getattr(self, "_exact_run_observer", None)
-            if run_observer is not None:
-                from recipe.exact.monitor import ExactSafetyStop
-
-                if not isinstance(error, ExactSafetyStop):
-                    try:
-                        run_observer.mark_failed(
-                            step=int(getattr(self, "global_steps", 0)),
-                            error=error,
-                        )
-                    except Exception as monitor_error:
-                        pprint(f"Failed to persist trainer exception: {monitor_error}")
+            if self._exact_hooks is not None:
+                self._exact_hooks.mark_failed(
+                    step=int(getattr(self, "global_steps", 0)),
+                    error=error,
+                )
             raise
 
     def _fit_impl(self):
@@ -1222,27 +1192,13 @@ class RayPPOTrainer:
         # load checkpoint before doing anything
         self._load_checkpoint()
 
-        run_observer = None
-        self._exact_run_observer = None
-        monitor_config = self.config.algorithm.exact.monitor
-        if monitor_config.enabled:
-            from recipe.exact.monitor import AgentRunObserver
-
-            run_observer = AgentRunObserver(
-                output_dir=monitor_config.output_dir,
-                conservation_tolerance=self.config.algorithm.exact.conservation_tolerance,
-                opaque_target_warning_ratio=monitor_config.opaque_target_warning_ratio,
-                ppo_kl_warning=monitor_config.ppo_kl_warning,
-                clipfrac_warning=monitor_config.clipfrac_warning,
-                grad_norm_warning=monitor_config.grad_norm_warning,
-                response_clip_warning_ratio=monitor_config.response_clip_warning_ratio,
-                invalid_step_warning_ratio=monitor_config.invalid_step_warning_ratio,
-                initial_env_steps=self.cumulative_env_steps,
-                initial_generated_tokens=self.cumulative_generated_tokens,
-                initial_active_gpu_hours=self.cumulative_active_gpu_hours,
-                initial_step=self.global_steps,
+        if self._exact_hooks is not None:
+            self._exact_hooks.start_run(
+                env_steps=self.cumulative_env_steps,
+                generated_tokens=self.cumulative_generated_tokens,
+                active_gpu_hours=self.cumulative_active_gpu_hours,
+                step=self.global_steps,
             )
-            self._exact_run_observer = run_observer
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1250,12 +1206,12 @@ class RayPPOTrainer:
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
-            if run_observer is not None:
-                run_observer.observe_validation(step=self.global_steps, metrics=val_metrics)
+            if self._exact_hooks is not None:
+                self._exact_hooks.observe_validation(step=self.global_steps, metrics=val_metrics)
             logger.log(data=val_metrics, step=self.global_steps)
             if self.config.trainer.get("val_only", False):
-                if run_observer is not None:
-                    run_observer.mark_completed(step=self.global_steps, metrics=val_metrics)
+                if self._exact_hooks is not None:
+                    self._exact_hooks.mark_completed(step=self.global_steps, metrics=val_metrics)
                 return
 
         # add tqdm
@@ -1270,7 +1226,6 @@ class RayPPOTrainer:
                 metrics = {}
                 timing_raw = {}
                 step_warnings = []
-                exact_traces = []
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
                 prompt_count = len(batch)
 
@@ -1281,8 +1236,8 @@ class RayPPOTrainer:
                         "training/cumulative_generated_tokens": self.cumulative_generated_tokens,
                         "training/cumulative_active_gpu_hours": self.cumulative_active_gpu_hours,
                     }
-                    if run_observer is not None:
-                        run_observer.mark_budget_reached(
+                    if self._exact_hooks is not None:
+                        self._exact_hooks.mark_budget_reached(
                             step=self.global_steps - 1,
                             metrics=budget_metrics,
                         )
@@ -1495,64 +1450,19 @@ class RayPPOTrainer:
                             gigpo_similarity_thresh=self.config.algorithm.gigpo.similarity_thresh,
                             exact_config=self.config.algorithm.exact,
                             exact_alpha_by_bucket=(
-                                self.exact_alpha_controller.active
-                                if self.exact_alpha_controller is not None
+                                self._exact_hooks.active_alpha
+                                if self._exact_hooks is not None
                                 else None
                             ),
                         )
-                        metrics.update(batch.meta_info.pop("exact_metrics", {}))
-                        exact_traces = batch.meta_info.pop("exact_traces", [])
-                        if self.exact_alpha_controller is not None:
-                            from recipe.exact.advantage import fit_delayed_alpha_from_traces
-
-                            pending_alpha = fit_delayed_alpha_from_traces(
-                                self.exact_alpha_controller,
-                                exact_traces,
-                                min_samples=self.config.algorithm.exact.cv.min_samples,
-                            )
-                            if pending_alpha is not None:
-                                next_alpha = self.exact_alpha_controller.advance()
-                                for bucket, alpha in next_alpha.items():
-                                    metrics[f"exact/cv_alpha_next/{bucket}"] = float(alpha)
-                        if run_observer is not None:
-                            from recipe.exact.monitor import (
-                                build_rollout_records,
-                                build_trajectory_diagnostics,
-                                summarize_trajectory_diagnostics,
-                            )
-
-                            trajectory_diagnostics = build_trajectory_diagnostics(
-                                batch,
-                                exact_traces,
-                                max_steps=self.config.env.max_steps,
-                                opaque_target_warning_ratio=monitor_config.opaque_target_warning_ratio,
+                        if self._exact_hooks is not None:
+                            _, step_warnings = self._exact_hooks.after_advantage(
+                                batch=batch,
+                                metrics=metrics,
                                 tokenizer=self.tokenizer,
+                                max_steps=self.config.env.max_steps,
+                                step=self.global_steps,
                             )
-                            metrics.update(summarize_trajectory_diagnostics(trajectory_diagnostics))
-
-                            rollout_records = build_rollout_records(
-                                self.tokenizer,
-                                batch,
-                                max_records=monitor_config.rollout_sample_count,
-                                trajectory_diagnostics=trajectory_diagnostics,
-                                redact_text=monitor_config.redact_text,
-                                max_text_chars=monitor_config.max_text_chars,
-                            )
-                            if self.config.algorithm.adv_estimator == AdvantageEstimator.EXACT:
-                                step_warnings = run_observer.observe_credit(
-                                    step=self.global_steps,
-                                    metrics=metrics,
-                                    traces=exact_traces,
-                                    rollout_records=rollout_records,
-                                    trajectory_diagnostics=trajectory_diagnostics,
-                                )
-                            else:
-                                step_warnings = run_observer.observe_rollouts(
-                                    step=self.global_steps,
-                                    metrics=metrics,
-                                    rollout_records=rollout_records,
-                                    trajectory_diagnostics=trajectory_diagnostics,
-                                )
 
                     # update critic
                     if self.use_critic:
@@ -1572,8 +1482,8 @@ class RayPPOTrainer:
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
-                        if run_observer is not None:
-                            step_warnings = run_observer.observe_update(
+                        if self._exact_hooks is not None:
+                            step_warnings = self._exact_hooks.observe_update(
                                 step=self.global_steps,
                                 metrics=metrics,
                                 warnings=step_warnings,
@@ -1586,12 +1496,9 @@ class RayPPOTrainer:
                             print(batch.batch.keys())
                             inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
                             outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-                            if run_observer is not None and monitor_config.redact_text:
-                                from recipe.exact.monitor import redact_rollout_text
-
-                                max_text_chars = self.config.algorithm.exact.monitor.max_text_chars
-                                inputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in inputs]
-                                outputs = [redact_rollout_text(value, max_chars=max_text_chars) for value in outputs]
+                            if self._exact_hooks is not None:
+                                inputs = self._exact_hooks.redact_texts(inputs)
+                                outputs = self._exact_hooks.redact_texts(outputs)
                             scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
                             self._dump_generations(
                                 inputs=inputs,
@@ -1605,8 +1512,8 @@ class RayPPOTrainer:
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
                         with _timer("testing", timing_raw):
                             val_metrics: dict = self._validate()
-                            if run_observer is not None:
-                                run_observer.observe_validation(
+                            if self._exact_hooks is not None:
+                                self._exact_hooks.observe_validation(
                                     step=self.global_steps,
                                     metrics=val_metrics,
                                 )
@@ -1642,9 +1549,14 @@ class RayPPOTrainer:
 
                 # Save after accounting for the rollout consumed by this step,
                 # so a resumed budget cannot silently forget completed work.
+                checkpoint_saved = False
                 if should_save_checkpoint:
                     with _timer("save_checkpoint", timing_raw):
-                        self._save_checkpoint()
+                        checkpoint_saved = save_checkpoint_if_needed(
+                            should_save=True,
+                            already_saved=checkpoint_saved,
+                            save=self._save_checkpoint,
+                        )
 
                 # training metrics
                 metrics.update(
@@ -1667,8 +1579,8 @@ class RayPPOTrainer:
                     }
                 )
 
-                if run_observer is not None:
-                    run_observer.complete_step(
+                if self._exact_hooks is not None:
+                    self._exact_hooks.complete_step(
                         step=self.global_steps,
                         metrics=metrics,
                         warnings=step_warnings,
@@ -1692,9 +1604,13 @@ class RayPPOTrainer:
                     prompt_count
                 )
                 if (budget_reached or next_rollout_would_exceed) and not is_last_step:
-                    self._save_checkpoint()
-                    if run_observer is not None:
-                        run_observer.mark_budget_reached(
+                    save_checkpoint_if_needed(
+                        should_save=True,
+                        already_saved=checkpoint_saved,
+                        save=self._save_checkpoint,
+                    )
+                    if self._exact_hooks is not None:
+                        self._exact_hooks.mark_budget_reached(
                             step=self.global_steps,
                             metrics=metrics,
                         )
@@ -1709,8 +1625,8 @@ class RayPPOTrainer:
                 progress_bar.update(1)
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")
-                    if run_observer is not None:
-                        run_observer.mark_completed(step=self.global_steps, metrics=metrics)
+                    if self._exact_hooks is not None:
+                        self._exact_hooks.mark_completed(step=self.global_steps, metrics=metrics)
                     progress_bar.close()
                     return
                 self.global_steps += 1

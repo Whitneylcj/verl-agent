@@ -28,6 +28,7 @@ max_env_steps=${MAX_ENV_STEPS:-10000}
 max_generated_tokens=${MAX_GENERATED_TOKENS:-1000000}
 use_invalid_action_penalty=${USE_INVALID_ACTION_PENALTY:-False}
 potential_scale=${POTENTIAL_SCALE:-1.0}
+prompt_profile=${PROMPT_PROFILE:-}
 max_steps=20
 max_prompt_length=2048
 max_response_length=${MAX_RESPONSE_LENGTH:-256}
@@ -59,6 +60,7 @@ case "${environment_name}" in
     train_size=${TRAIN_SIZE:-2}
     validation_size=${VALIDATION_SIZE:-4}
     group_size=${GROUP_SIZE:-2}
+    default_prompt_profile=appworld_exact_json
     ;;
   *)
     echo "Unsupported environment: ${environment_name}" >&2
@@ -66,6 +68,11 @@ case "${environment_name}" in
     ;;
 esac
 exact_mode=${exact_mode:-${default_exact_mode}}
+prompt_profile=${prompt_profile:-${default_prompt_profile:-benchmark}}
+appworld_action_mode=python
+if [[ "${environment_name}" == "appworld" && "${prompt_profile}" != "benchmark" ]]; then
+  appworld_action_mode=json_api
+fi
 
 loss_agg_mode=${LOSS_AGG_MODE:-seq-mean-token-sum}
 if [[ "${algorithm_name}" == "exact" && "${loss_agg_mode}" != "seq-mean-token-sum" ]]; then
@@ -74,7 +81,8 @@ if [[ "${algorithm_name}" == "exact" && "${loss_agg_mode}" != "seq-mean-token-su
 fi
 
 loss_tag=${loss_agg_mode//-/_}
-experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${environment_name}_${model_tag}_seed${seed}"
+profile_tag=${prompt_profile//[^[:alnum:]._-]/_}
+experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${profile_tag}_${environment_name}_${model_tag}_seed${seed}"
 run_output_dir="${output_root}/${experiment_name}"
 prepared_data_root="${data_root}/train${train_size}_val${validation_size}"
 train_file="${prepared_data_root}/text/train.parquet"
@@ -122,11 +130,12 @@ common_overrides=(
   "actor_rollout_ref.ref.fsdp_config.param_offload=True"
   "algorithm.use_kl_in_reward=False"
   "env.env_name=${env_name}"
+  "env.prompt_profile=${prompt_profile}"
   "env.seed=${seed}"
   "env.max_steps=${max_steps}"
   "env.rollout.n=${group_size}"
   "env.sokoban.mode=tiny_rgb_array"
-  "env.appworld.action_mode=json_api"
+  "env.appworld.action_mode=${appworld_action_mode}"
   "env.appworld.validation_split=dev"
   "env.resources_per_worker.num_cpus=0.1"
   "trainer.logger=['console','tensorboard']"
@@ -219,6 +228,7 @@ manifest_args=(
   --model-path "${model_path}"
   --seed "${seed}"
   --loss-agg-mode "${loss_agg_mode}"
+  --prompt-profile "${prompt_profile}"
 )
 if [[ "${RESUME_RUN:-0}" == "1" ]]; then
   manifest_args+=(--resume)

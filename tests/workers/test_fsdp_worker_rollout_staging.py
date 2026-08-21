@@ -1,29 +1,80 @@
-import ast
+import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKER_SOURCE = REPO_ROOT / "verl" / "workers" / "fsdp_workers.py"
-
-
-def _worker_method(name: str) -> ast.FunctionDef:
-    tree = ast.parse(WORKER_SOURCE.read_text(encoding="utf-8"))
-    worker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "ActorRolloutRefWorker")
-    return next(node for node in worker.body if isinstance(node, ast.FunctionDef) and node.name == name)
-
-
-def test_init_builds_rollout_before_sharding_manager_is_used() -> None:
-    init_model = _worker_method("init_model")
-    build_rollout_guard = next(node for node in ast.walk(init_model) if isinstance(node, ast.If) and any(isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "_build_rollout" for call in ast.walk(node)))
-
-    assert ast.unparse(build_rollout_guard.test) == "self._is_rollout"
+MODULE_PATH = Path(__file__).resolve().parents[2] / "verl" / "workers" / "rollout_staging.py"
+SPEC = importlib.util.spec_from_file_location("rollout_staging_under_test", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+build_rollout_components = MODULE.build_rollout_components
+finalize_actor_update = MODULE.finalize_actor_update
 
 
-def test_update_stages_rollout_weights_before_actor_offload() -> None:
-    update_actor = _worker_method("update_actor")
-    calls = [node for node in ast.walk(update_actor) if isinstance(node, ast.Call)]
-    stage = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "stage_updated_weights")
-    offload = next(node for node in calls if isinstance(node.func, ast.Name) and node.func.id == "offload_fsdp_model_to_cpu")
-    synchronize = next(node for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "synchronize")
-    final_empty_cache = max(node.lineno for node in calls if isinstance(node.func, ast.Attribute) and node.func.attr == "empty_cache")
+class _Device:
+    def __init__(self, events):
+        self.events = events
 
-    assert stage.lineno < offload.lineno < synchronize.lineno < final_empty_cache
+    def empty_cache(self):
+        self.events.append("empty_cache")
+
+    def synchronize(self):
+        self.events.append("synchronize")
+
+
+def test_rollout_components_are_built_only_for_rollout_role():
+    calls = []
+
+    def build():
+        calls.append("build")
+        return "rollout", "manager"
+
+    assert build_rollout_components(False, build) is None
+    assert calls == []
+    assert build_rollout_components(True, build) == ("rollout", "manager")
+    assert calls == ["build"]
+
+
+def test_update_stages_weights_before_actor_offload_and_synchronization():
+    events = []
+    manager = SimpleNamespace(stage_updated_weights=lambda: events.append("stage_weights"))
+
+    finalize_actor_update(
+        is_rollout=True,
+        rollout_sharding_manager=manager,
+        offload_param=True,
+        offload_optimizer=True,
+        actor_module="actor",
+        actor_optimizer="optimizer",
+        device=_Device(events),
+        offload_model=lambda module: events.append(f"offload_model:{module}"),
+        offload_optim=lambda *, optimizer: events.append(f"offload_optimizer:{optimizer}"),
+    )
+
+    assert events == [
+        "empty_cache",
+        "stage_weights",
+        "offload_model:actor",
+        "offload_optimizer:optimizer",
+        "synchronize",
+        "empty_cache",
+    ]
+
+
+def test_update_without_offload_does_not_synchronize():
+    events = []
+    manager = SimpleNamespace(stage_updated_weights=lambda: events.append("stage_weights"))
+
+    finalize_actor_update(
+        is_rollout=True,
+        rollout_sharding_manager=manager,
+        offload_param=False,
+        offload_optimizer=False,
+        actor_module=None,
+        actor_optimizer=None,
+        device=_Device(events),
+        offload_model=lambda module: events.append("unexpected_model_offload"),
+        offload_optim=lambda *, optimizer: events.append("unexpected_optimizer_offload"),
+    )
+
+    assert events == ["empty_cache", "stage_weights"]

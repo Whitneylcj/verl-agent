@@ -43,16 +43,14 @@ observed environment reward; no distance, deadlock, or other heuristic shaping
 factor is part of the default schema. The adapter is source-locked to
 `mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89`.
 
-The ALFWorld snapshot reads TextWorld's structured PDDL `facts`, never model
-text, and exposes the official `won` result as a return component with native
-weight `10`. It also decomposes the exact PDDL goal for each of ALFWorld's six
-supported text task types into fixed binary process channels (placement,
-object state, held object, and light readiness as applicable). Process weights
-sum to `1` within every task, but their terminal closures keep them
-return-neutral: they redistribute credit without adding shaped environment
-reward. Every checkpoint recomputes the conjunction of these factors and
-requires it to agree with TextWorld's official `won` signal. Verifier values are
-training-only and are never added to the policy prompt. The locked sources are
+The ALFWorld snapshot accumulates TextWorld's official per-step
+`intermediate_reward` signal in one process-verifier channel. Reset must expose
+zero, and every later step must be one of `-1`, `0`, or `+1`; each checkpoint
+delta is checked against that native signal. The process channel closes to zero,
+while ALFWorld's existing binary `10 * won` episode return remains entirely in
+the opaque target. EXACT does not read `facts`, `traj_data.json`, or a handwritten
+PDDL goal decomposition. Verifier values are training-only and are never added
+to the policy prompt. The locked sources are
 `alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e` and
 `microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2`.
 
@@ -93,12 +91,12 @@ PREFLIGHT_ONLY=1 bash examples/exact_trainer/run_sokoban.sh
 python -m recipe.exact.probe_alfworld_verifier
 ```
 
-The ALFWorld integration probe privately follows one official expert plan for
-each of the six supported text tasks. It checks structured fact access, fixed
-factor schemas, preterminal progress for multi-condition tasks, agreement with
-official `won`, and exact reconstruction of the `10 * won` episode return. Its
-output contains only aggregate task/factor diagnostics, not benchmark paths,
-observations, or actions.
+The ALFWorld integration probe privately follows official expert plans over a
+configurable sample of TextWorld games. It checks that every snapshot delta is
+the official `intermediate_reward`, that the process channel has zero target
+mass, and that the binary `10 * won` episode return remains opaque and exactly
+conserved. Its output contains only aggregate signal diagnostics, not benchmark
+paths, observations, or actions.
 
 The launcher defaults Sokoban, ALFWorld, and WebShop to `EXACT_MODE=temporal`
 (Exact-T), and AppWorld to `EXACT_MODE=graph` (Exact-G). Set `EXACT_MODE`

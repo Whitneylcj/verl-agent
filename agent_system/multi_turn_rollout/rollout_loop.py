@@ -353,16 +353,21 @@ class TrajectoryCollector:
         episode_rewards = _new_episode_reward_accumulator(batch_size)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
         use_exact = str(self.config.algorithm.adv_estimator).lower().split(".")[-1] == "exact"
+        exact_adapter = None
+        if use_exact:
+            from recipe.exact.integration import ExactEnvironmentAdapter
+
+            exact_adapter = ExactEnvironmentAdapter(envs)
         # Trajectory collection loop
         for _step in range(self.config.env.max_steps):
             active_masks = np.logical_not(is_done)
 
             if use_exact:
                 exact_probe_started = time.perf_counter()
-                exact_factor_pre = envs.exact_credit_snapshots()
+                exact_factor_pre = exact_adapter.snapshots()
                 if len(exact_factor_pre) != batch_size:
                     raise ValueError("EXACT pre-action probe batch size does not match rollout batch")
-                exact_effect_schema = envs.exact_effect_schemas(exact_factor_pre)
+                exact_effect_schema = exact_adapter.effect_schemas(exact_factor_pre)
                 if len(exact_effect_schema) != batch_size:
                     raise ValueError("EXACT effect schema batch size does not match rollout batch")
                 exact_pre_probe_seconds = time.perf_counter() - exact_probe_started
@@ -407,7 +412,7 @@ class TrajectoryCollector:
                 response_mask = batch.batch.get("response_mask")
                 if response_mask is None:
                     response_mask = batch.batch["attention_mask"][:, -response_length:]
-                exact_effect_schema = envs.resolve_exact_effect_schemas(
+                exact_effect_schema = exact_adapter.resolve_effect_schemas(
                     schemas=exact_effect_schema,
                     text_actions=text_actions,
                     response_token_ids=batch.batch["responses"],
@@ -419,7 +424,7 @@ class TrajectoryCollector:
 
             if use_exact:
                 exact_post_probe_started = time.perf_counter()
-                exact_factor_post = envs.exact_credit_snapshots()
+                exact_factor_post = exact_adapter.snapshots()
                 if len(exact_factor_post) != batch_size:
                     raise ValueError("EXACT post-action probe batch size does not match rollout batch")
                 batch.non_tensor_batch["exact_step_id"] = np.full(batch_size, _step + 1, dtype=np.int64)

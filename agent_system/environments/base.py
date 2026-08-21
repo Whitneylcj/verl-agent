@@ -47,6 +47,7 @@ class EnvironmentManagerBase:
         self.envs = envs
         self.projection_f = projection_f
         self.config = config
+        self.prompt_profile = resolve_prompt_profile(config)
 
     def reset(self, kwargs) -> Dict[str, Any]:
         """
@@ -98,42 +99,6 @@ class EnvironmentManagerBase:
         dones = to_numpy(dones)
         
         return next_observations, rewards, dones, infos
-
-    def exact_credit_snapshots(self) -> List[Dict[str, Any]]:
-        """Return side-effect-free verifier factors for every live sub-environment.
-
-        EXACT calls this before action generation and immediately after the
-        environment step. Managers must override this method and keep the factor
-        schema fixed for the whole trajectory.
-        """
-
-        raise NotImplementedError(
-            f"{type(self).__name__} does not provide an EXACT credit probe"
-        )
-
-    def exact_effect_schemas(
-        self,
-        snapshots: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Build prefix-predictable conservative routes from pre-action state."""
-
-        from recipe.exact.env_probes import conservative_future_schema
-
-        environment = str(self.config.env.env_name).split("/")[0].lower()
-        return [conservative_future_schema(snapshot, environment) for snapshot in snapshots]
-
-    def resolve_exact_effect_schemas(
-        self,
-        schemas: List[Dict[str, Any]],
-        text_actions: List[str],
-        response_token_ids: Any,
-        response_mask: Any,
-        tokenizer: Any,
-    ) -> List[Dict[str, Any]]:
-        """Resolve post-generation prefix spans; default schemas are concrete."""
-
-        del text_actions, response_token_ids, response_mask, tokenizer
-        return schemas
 
     def build_text_obs(self,) -> List[str]:
         """

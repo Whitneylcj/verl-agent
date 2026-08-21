@@ -10,6 +10,7 @@ class _Batch:
     def __init__(self, tensors, non_tensors):
         self.batch = tensors
         self.non_tensor_batch = non_tensors
+        self.meta_info = {}
 
 
 def _snapshot(checkpoint_id, values):
@@ -90,7 +91,8 @@ def test_exact_advantage_is_padding_safe_and_trajectory_normalized():
     torch.testing.assert_close(data.batch["advantages"], expected)
     assert data.batch["response_mask"][3].sum() == 0
     assert data.batch["loss_mask"][3].sum() == 0
-    torch.testing.assert_close(data.batch["exact_aux_loss_scale"], torch.full((4,), 2.0))
+    assert data.meta_info["update_batch_mode"] == "full_rollout"
+    assert data.meta_info["regularizer_scale"] == 2.0
     assert metrics["exact/trajectory_count"] == 2
     assert metrics["exact/padding_rows"] == 1
     assert metrics["exact/trajectory_scale"] == 2

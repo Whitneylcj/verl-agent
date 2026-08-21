@@ -13,6 +13,7 @@ def _experiment(model_path="Qwen/Qwen2.5-1.5B-Instruct"):
         "model_path": model_path,
         "seed": 0,
         "loss_agg_mode": "seq-mean-token-sum",
+        "prompt_profile": "benchmark",
     }
 
 

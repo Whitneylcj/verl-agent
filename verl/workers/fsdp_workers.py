@@ -63,6 +63,7 @@ from verl.utils.fsdp_utils import (
 from verl.utils.import_utils import import_external_libs
 from verl.utils.model import compute_position_id_with_mask
 from verl.utils.py_functional import convert_to_regular_types
+from verl.workers.rollout_staging import build_rollout_components, finalize_actor_update
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 
 logger = logging.getLogger(__file__)
@@ -537,8 +538,12 @@ class ActorRolloutRefWorker(Worker):
                 self.config.actor.use_fused_kernels = use_fused_kernels
             self.actor = DataParallelPPOActor(config=self.config.actor, actor_module=self.actor_module_fsdp, actor_optimizer=self.actor_optimizer)
 
-        if self._is_rollout:
-            self.rollout, self.rollout_sharding_manager = self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False))
+        rollout_components = build_rollout_components(
+            self._is_rollout,
+            lambda: self._build_rollout(trust_remote_code=self.config.model.get("trust_remote_code", False)),
+        )
+        if rollout_components is not None:
+            self.rollout, self.rollout_sharding_manager = rollout_components
 
         if self._is_ref:
             local_path = copy_to_local(self.config.model.path, use_shm=use_shm)
@@ -608,21 +613,22 @@ class ActorRolloutRefWorker(Worker):
             # offloaded.  Staging a detached CPU copy prevents the next rollout
             # from transiently loading both the full actor and vLLM weights.
             del data
-            get_torch_device().empty_cache()
-            self.rollout_sharding_manager.stage_updated_weights()
-
+        finalize_actor_update(
+            is_rollout=self._is_rollout,
+            rollout_sharding_manager=getattr(self, "rollout_sharding_manager", None),
+            offload_param=self._is_offload_param,
+            offload_optimizer=self._is_offload_optimizer,
+            actor_module=self.actor_module_fsdp,
+            actor_optimizer=self.actor_optimizer,
+            device=get_torch_device(),
+            offload_model=offload_fsdp_model_to_cpu,
+            offload_optim=offload_fsdp_optimizer,
+        )
         if self._is_offload_param:
-            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during update_actor", logger=logger)
         if self._is_offload_optimizer:
-            offload_fsdp_optimizer(optimizer=self.actor_optimizer)
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
         if self._is_offload_param or self._is_offload_optimizer:
-            # Both offload helpers enqueue non-blocking device-to-host copies.
-            # Finish those transfers before a validation rollout asks vLLM's
-            # CuMem allocator to remap its weights and KV cache.
-            get_torch_device().synchronize()
-            get_torch_device().empty_cache()
             log_gpu_memory_usage("After synchronizing actor offload during update_actor", logger=logger)
 
         return output

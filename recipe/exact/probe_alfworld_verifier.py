@@ -1,4 +1,4 @@
-"""Run the EXACT verifier against one official ALFWorld game per text task.
+"""Run the EXACT verifier against official ALFWorld TextWorld games.
 
 This is a remote-only integration probe. It follows ALFWorld's hand-coded
 expert without printing benchmark instance paths, observations, or actions.
@@ -20,10 +20,6 @@ from agent_system.environments.env_package.alfworld.envs import (
     AlfworldWorker,
     load_config_file,
 )
-from recipe.exact.alfworld_verifier import (
-    SUPPORTED_ALFWORLD_TASKS,
-    load_alfworld_verifier_spec,
-)
 from recipe.exact.core_exact import IdentityPotential, build_scoped_conserved_atoms
 from recipe.exact.credit_spec import FactorSnapshot
 
@@ -32,17 +28,6 @@ def _single(value: Any, name: str) -> Any:
     if isinstance(value, (str, bytes)) or not hasattr(value, "__len__") or len(value) != 1:
         raise RuntimeError(f"expected exactly one batched ALFWorld {name} value")
     return value[0]
-
-
-def _select_one_game_per_task(game_files: list[str]) -> dict[str, str]:
-    selected = {}
-    for gamefile in game_files:
-        spec = load_alfworld_verifier_spec(gamefile)
-        selected.setdefault(spec.task_type, gamefile)
-    missing = set(SUPPORTED_ALFWORLD_TASKS) - set(selected)
-    if missing:
-        raise RuntimeError(f"ALFWorld data is missing verifier task types: {sorted(missing)}")
-    return selected
 
 
 def _compile_real_trajectory(
@@ -74,20 +59,14 @@ def _compile_real_trajectory(
         episode_return,
         potential,
     )
-    if conserved.channel_target_masses["terminal_success"] != episode_return:
-        raise RuntimeError("ALFWorld terminal verifier does not reconstruct episode return")
-    process_target_mass = sum(
-        value
-        for factor_id, value in conserved.channel_target_masses.items()
-        if factor_id != "terminal_success"
-    )
-    if process_target_mass != 0.0 or conserved.opaque_target_atom.value != 0.0:
+    if any(value != 0.0 for value in conserved.channel_target_masses.values()):
         raise RuntimeError("ALFWorld process verifier changed the conserved return target")
+    if conserved.opaque_target_atom.value != episode_return:
+        raise RuntimeError("ALFWorld binary training return must remain opaque")
     return conserved.conservation_error
 
 
 def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
-    verifier_spec = load_alfworld_verifier_spec(gamefile)
     base_env.game_files = [gamefile]
     base_env.num_games = 1
     base_env.use_expert = True
@@ -96,8 +75,11 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
         _, infos = worker.reset()
         snapshots = [worker.exact_credit_snapshot()]
         factor_ids = snapshots[0]["factor_ids"]
+        if factor_ids != ("textworld_intermediate_reward_cumulative",):
+            raise RuntimeError("ALFWorld probe exposed an unexpected factor schema")
         total_reward = 0.0
         done = False
+        intermediate_rewards = []
 
         for step_count in range(1, max_steps + 1):
             plan = _single(infos["extra.expert_plan"], "expert plan")
@@ -111,10 +93,21 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
             _, _, dones, infos = worker.step(action)
             won = bool(_single(infos["won"], "won"))
             done = bool(_single(dones, "done"))
+            intermediate_reward = float(
+                _single(infos["intermediate_reward"], "intermediate reward")
+            )
+            if intermediate_reward not in {-1.0, 0.0, 1.0}:
+                raise RuntimeError("ALFWorld emitted an invalid intermediate_reward")
             total_reward += 10.0 * float(won)
             snapshot = worker.exact_credit_snapshot()
             if snapshot["factor_ids"] != factor_ids:
                 raise RuntimeError("ALFWorld factor schema changed during expert rollout")
+            snapshot_delta = snapshot["values"][0] - snapshots[-1]["values"][0]
+            if snapshot_delta != intermediate_reward:
+                raise RuntimeError(
+                    "ALFWorld checkpoint delta differs from official intermediate_reward"
+                )
+            intermediate_rewards.append(intermediate_reward)
             snapshots.append(snapshot)
             if done:
                 break
@@ -125,26 +118,19 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
             raise RuntimeError("ALFWorld expert did not reach official success")
         if total_reward != 10.0:
             raise RuntimeError("ALFWorld training return no longer equals 10 * won")
-        if snapshots[-1]["values"][0] != 1.0:
-            raise RuntimeError("ALFWorld terminal return component did not activate")
-
-        process_values = [snapshot["values"][1:] for snapshot in snapshots]
-        process_change_count = sum(
-            current != previous
-            for previous, current in zip(process_values, process_values[1:])
-        )
+        process_change_count = sum(value != 0.0 for value in intermediate_rewards)
         if process_change_count == 0:
             raise RuntimeError("ALFWorld process verifier never changed on an expert plan")
-        if len(factor_ids) > 2 and not any(any(values) for values in process_values[1:-1]):
-            raise RuntimeError("multi-condition ALFWorld verifier exposed no preterminal progress")
         conservation_error = _compile_real_trajectory(snapshots, total_reward)
 
         return {
-            "task_type": verifier_spec.task_type,
             "steps": step_count,
             "factor_ids": factor_ids,
             "process_change_count": process_change_count,
-            "preterminal_progress": any(any(values) for values in process_values[1:-1]),
+            "intermediate_reward_counts": {
+                str(value): intermediate_rewards.count(value)
+                for value in (-1.0, 0.0, 1.0)
+            },
             "episode_return": total_reward,
             "conservation_error": conservation_error,
         }
@@ -160,18 +146,25 @@ def main() -> None:
         default=Path("agent_system/environments/env_package/alfworld/configs/config_tw.yaml"),
     )
     parser.add_argument("--max-steps", type=int, default=50)
+    parser.add_argument("--games", type=int, default=6)
     args = parser.parse_args()
     if args.max_steps <= 0:
         raise ValueError("--max-steps must be positive")
+    if args.games <= 0:
+        raise ValueError("--games must be positive")
 
     config = load_config_file(args.config)
     config["env"]["domain_randomization"] = False
     env_type = config["env"]["type"]
     base_env = get_environment(env_type)(config, train_eval="train")
-    selected = _select_one_game_per_task(base_env.game_files)
+    selected = list(base_env.game_files[: args.games])
+    if len(selected) < args.games:
+        raise RuntimeError(
+            f"ALFWorld data contains only {len(selected)} games; requested {args.games}"
+        )
     results = [
-        _probe_game(base_env, selected[task_type], args.max_steps)
-        for task_type in SUPPORTED_ALFWORLD_TASKS
+        _probe_game(base_env, gamefile, args.max_steps)
+        for gamefile in selected
     ]
     print(json.dumps({"status": "passed", "tasks": results}, indent=2))
 
