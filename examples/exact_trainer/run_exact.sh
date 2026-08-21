@@ -187,7 +187,7 @@ if [[ "${RUN_DIR_ONLY:-0}" == "1" ]]; then
 fi
 
 if [[ "${PREFLIGHT_ONLY:-0}" == "1" ]]; then
-  python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "${model_overrides[@]}" --cfg job "$@"
+  python3 -m verl.trainer.main_ppo "${common_overrides[@]}" "${model_overrides[@]}" "$@" --cfg job
   exit 0
 fi
 

@@ -35,11 +35,11 @@ def _run_dir(environment: str, **extra_env: str) -> str:
     return Path(result.stdout.strip()).name
 
 
-def _preflight(environment: str, **extra_env: str) -> str:
+def _preflight(environment: str, *overrides: str, **extra_env: str) -> str:
     env = os.environ.copy()
     env.update({"PREFLIGHT_ONLY": "1", "MODEL_PATH": "fixture/model", **extra_env})
     result = subprocess.run(
-        ["bash", str(RUN_EXACT), environment],
+        ["bash", str(RUN_EXACT), environment, *overrides],
         cwd=REPO_ROOT,
         env=env,
         check=True,
@@ -85,6 +85,17 @@ def test_launcher_resolved_limits_and_paths():
     assert "max_response_length: 384" in sokoban
     assert "train2_val3/text/train.parquet" in sokoban
     assert "train2_val3/text/test.parquet" in sokoban
+
+
+def test_preflight_parses_additional_hydra_overrides():
+    pytest.importorskip("hydra")
+    config = _preflight(
+        "sokoban",
+        "trainer.total_training_steps=7",
+        "actor_rollout_ref.actor.ppo_mini_batch_size=4",
+    )
+    assert "total_training_steps: 7" in config
+    assert "ppo_mini_batch_size: 4" in config
 
 
 @pytest.mark.parametrize("script", (RUN_EXACT, LAUNCH_MANAGED, LAUNCH_PILOT, PREPARE_MODEL))
