@@ -22,43 +22,57 @@ from agent_system.environments.env_package.sokoban.sokoban import SokobanEnv
 
 class SokobanWorker:
     """
-    Ray remote actor that replaces the worker function.
-    Each actor holds its own independent instance of SokobanEnv.
+    Ray remote actor that owns one prompt group of independent environments.
+
+    Keeping the ``group_n`` replicas in one actor preserves the flat
+    trajectory ordering expected by GRPO while avoiding one Python/Ray process
+    per rollout.  The latter exhausts container PID/thread limits for the
+    upstream 32 prompts x 8 rollouts configuration.
     """
 
-    def __init__(self, mode, env_kwargs):
-        """Initialize the Sokoban environment in this worker"""
-        self.env = SokobanEnv(mode, **env_kwargs)
+    def __init__(self, mode, env_kwargs, group_n=1):
+        """Initialize independent Sokoban replicas for one prompt group."""
+        self.envs = [SokobanEnv(mode, **env_kwargs) for _ in range(group_n)]
 
-    def step(self, action):
-        """Execute a step in the environment"""
-        obs, reward, done, info = self.env.step(action)
-        return obs, reward, done, info
+    def step_many(self, actions):
+        """Execute one action in each replica, preserving replica order."""
+        if len(actions) != len(self.envs):
+            raise ValueError(f"expected {len(self.envs)} Sokoban actions, got {len(actions)}")
+        return [env.step(action) for env, action in zip(self.envs, actions)]
 
-    def reset(self, seed_for_reset):
-        """Reset the environment with given seed"""
-        obs, info = self.env.reset(seed=seed_for_reset)
-        return obs, info
+    def reset_many(self, seeds_for_reset):
+        """Reset each replica with the corresponding (usually shared) seed."""
+        if len(seeds_for_reset) != len(self.envs):
+            raise ValueError(f"expected {len(self.envs)} Sokoban seeds, got {len(seeds_for_reset)}")
+        return [env.reset(seed=seed) for env, seed in zip(self.envs, seeds_for_reset)]
 
-    def render(self, mode_for_render):
-        """Render the environment"""
-        rendered = self.env.render(mode=mode_for_render)
-        return rendered
+    def render_one(self, mode_for_render, replica_idx):
+        """Render one replica in this prompt group."""
+        return self.envs[replica_idx].render(mode=mode_for_render)
 
-    def exact_credit_snapshot(self):
+    def render_many(self, mode_for_render):
+        """Render every replica in this prompt group."""
+        return [env.render(mode=mode_for_render) for env in self.envs]
+
+    def exact_credit_snapshots(self):
         from recipe.exact.env_probes import sokoban_factor_snapshot
 
-        factor_state = self.env.exact_reward_factor_state()
-        return sokoban_factor_snapshot(
-            factor_state["event_counts"],
-            factor_state["reward_weights"],
-        )
+        snapshots = []
+        for env in self.envs:
+            factor_state = env.exact_reward_factor_state()
+            snapshots.append(
+                sokoban_factor_snapshot(
+                    factor_state["event_counts"],
+                    factor_state["reward_weights"],
+                )
+            )
+        return snapshots
 
 
 class SokobanMultiProcessEnv(gym.Env):
     """
     Ray-based wrapper for the Sokoban environment.
-    Each Ray actor creates an independent SokobanEnv instance.
+    Each Ray actor creates one group of independent SokobanEnv instances.
     The main process communicates with Ray actors to collect step/reset results.
     """
 
@@ -98,12 +112,23 @@ class SokobanMultiProcessEnv(gym.Env):
         if resources_per_worker is None:
             resources_per_worker = {"num_cpus": 0.1}
 
-        # Create Ray remote actors instead of processes
+        # One actor per distinct prompt.  Replicas within the prompt group are
+        # independent environments, but sharing their process prevents the
+        # official group size from multiplying the Ray worker count.
         env_worker = ray.remote(**resources_per_worker)(SokobanWorker)
         self.workers = []
-        for i in range(self.num_processes):
-            worker = env_worker.remote(self.mode, env_kwargs)
+        for _ in range(self.env_num):
+            worker = env_worker.remote(self.mode, env_kwargs, self.group_n)
             self.workers.append(worker)
+
+    def _grouped(self, values):
+        if len(values) != self.num_processes:
+            raise ValueError(f"expected {self.num_processes} values, got {len(values)}")
+        return [values[start : start + self.group_n] for start in range(0, self.num_processes, self.group_n)]
+
+    @staticmethod
+    def _flatten(grouped_values):
+        return [value for group in grouped_values for value in group]
 
     def step(self, actions):
         """
@@ -113,16 +138,9 @@ class SokobanMultiProcessEnv(gym.Env):
             obs_list, reward_list, done_list, info_list
             Each is a list of length self.num_processes
         """
-        assert len(actions) == self.num_processes
-
-        # Send step commands to all workers
-        futures = []
-        for worker, action in zip(self.workers, actions):
-            future = worker.step.remote(action)
-            futures.append(future)
-
-        # Collect results
-        results = ray.get(futures)
+        action_groups = self._grouped(actions)
+        results = ray.get([worker.step_many.remote(group) for worker, group in zip(self.workers, action_groups)])
+        results = self._flatten(results)
         obs_list, reward_list, done_list, info_list = [], [], [], []
         for obs, reward, done, info in results:
             obs_list.append(obs)
@@ -150,14 +168,9 @@ class SokobanMultiProcessEnv(gym.Env):
         """
         seeds = self._seeds_for_reset()
 
-        # Send reset commands to all workers
-        futures = []
-        for i, worker in enumerate(self.workers):
-            future = worker.reset.remote(seeds[i])
-            futures.append(future)
-
-        # Collect results
-        results = ray.get(futures)
+        seed_groups = self._grouped(seeds)
+        results = ray.get([worker.reset_many.remote(group) for worker, group in zip(self.workers, seed_groups)])
+        results = self._flatten(results)
         obs_list = []
         info_list = []
         for obs, info in results:
@@ -172,18 +185,18 @@ class SokobanMultiProcessEnv(gym.Env):
         otherwise returns a list from all environments.
         """
         if env_idx is not None:
-            future = self.workers[env_idx].render.remote(mode)
+            if not 0 <= env_idx < self.num_processes:
+                raise IndexError(f"Sokoban environment index out of range: {env_idx}")
+            worker_idx, replica_idx = divmod(env_idx, self.group_n)
+            future = self.workers[worker_idx].render_one.remote(mode, replica_idx)
             return ray.get(future)
         else:
-            futures = []
-            for worker in self.workers:
-                future = worker.render.remote(mode)
-                futures.append(future)
-            results = ray.get(futures)
-            return results
+            results = ray.get([worker.render_many.remote(mode) for worker in self.workers])
+            return self._flatten(results)
 
     def exact_credit_snapshots(self):
-        return ray.get([worker.exact_credit_snapshot.remote() for worker in self.workers])
+        grouped_snapshots = ray.get([worker.exact_credit_snapshots.remote() for worker in self.workers])
+        return self._flatten(grouped_snapshots)
 
     def close(self):
         """
