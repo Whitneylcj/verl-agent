@@ -11,6 +11,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from agent_system.environments.env_package.alfworld.alfworld.agents.environment import (
     get_environment,
 )
@@ -22,6 +24,8 @@ from recipe.exact.alfworld_verifier import (
     SUPPORTED_ALFWORLD_TASKS,
     load_alfworld_verifier_spec,
 )
+from recipe.exact.core_exact import IdentityPotential, build_scoped_conserved_atoms
+from recipe.exact.credit_spec import FactorSnapshot
 
 
 def _single(value: Any, name: str) -> Any:
@@ -39,6 +43,47 @@ def _select_one_game_per_task(game_files: list[str]) -> dict[str, str]:
     if missing:
         raise RuntimeError(f"ALFWorld data is missing verifier task types: {sorted(missing)}")
     return selected
+
+
+def _compile_real_trajectory(
+    snapshots: list[dict[str, Any]],
+    episode_return: float,
+) -> float:
+    typed_snapshots = tuple(
+        FactorSnapshot(
+            checkpoint_id=checkpoint_id,
+            factor_ids=tuple(snapshot["factor_ids"]),
+            values=np.asarray(snapshot["values"], dtype=np.float64),
+            read_sets=snapshot["read_sets"],
+            schema_version=snapshot["schema_version"],
+            channel_roles=snapshot["channel_roles"],
+            potential_weights=np.asarray(
+                snapshot["potential_weights"],
+                dtype=np.float64,
+            ),
+            source_revision=snapshot["source_revision"],
+        )
+        for checkpoint_id, snapshot in enumerate(snapshots)
+    )
+    potential = IdentityPotential(
+        factor_ids=typed_snapshots[0].factor_ids,
+        weights=typed_snapshots[0].potential_weights,
+    )
+    conserved = build_scoped_conserved_atoms(
+        typed_snapshots,
+        episode_return,
+        potential,
+    )
+    if conserved.channel_target_masses["terminal_success"] != episode_return:
+        raise RuntimeError("ALFWorld terminal verifier does not reconstruct episode return")
+    process_target_mass = sum(
+        value
+        for factor_id, value in conserved.channel_target_masses.items()
+        if factor_id != "terminal_success"
+    )
+    if process_target_mass != 0.0 or conserved.opaque_target_atom.value != 0.0:
+        raise RuntimeError("ALFWorld process verifier changed the conserved return target")
+    return conserved.conservation_error
 
 
 def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
@@ -92,6 +137,7 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
             raise RuntimeError("ALFWorld process verifier never changed on an expert plan")
         if len(factor_ids) > 2 and not any(any(values) for values in process_values[1:-1]):
             raise RuntimeError("multi-condition ALFWorld verifier exposed no preterminal progress")
+        conservation_error = _compile_real_trajectory(snapshots, total_reward)
 
         return {
             "task_type": verifier_spec.task_type,
@@ -100,6 +146,7 @@ def _probe_game(base_env: Any, gamefile: str, max_steps: int) -> dict[str, Any]:
             "process_change_count": process_change_count,
             "preterminal_progress": any(any(values) for values in process_values[1:-1]),
             "episode_return": total_reward,
+            "conservation_error": conservation_error,
         }
     finally:
         worker.env.close()
