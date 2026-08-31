@@ -47,6 +47,7 @@ def run_probe(
         {
             "env": {
                 "env_name": "AppWorld",
+                "prompt_profile": "appworld_exact_json",
                 "history_length": 2,
                 "appworld": {"action_mode": "json_api"},
             }
