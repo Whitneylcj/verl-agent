@@ -20,6 +20,7 @@ from agent_system.environments.env_package.appworld import (
 )
 from recipe.exact.appworld_schema import detect_appworld_source_revision
 from recipe.exact.audit_appworld_schema import exact_git_state
+from recipe.exact.integration import ExactEnvironmentAdapter
 
 
 class _CharacterTokenizer:
@@ -68,10 +69,11 @@ def run_probe(
         partial(appworld_projection, action_mode="json_api"),
         config,
     )
+    exact_adapter = ExactEnvironmentAdapter(manager)
     try:
         _, reset_infos = manager.reset(kwargs=None)
-        pre_snapshot = manager.exact_credit_snapshots()[0]
-        registry = manager.exact_effect_schemas([pre_snapshot])[0]
+        pre_snapshot = exact_adapter.snapshots()[0]
+        registry = exact_adapter.effect_schemas([pre_snapshot])[0]
         if registry["kind"] != "appworld-prefix-effect-v1":
             raise AssertionError("unexpected AppWorld prefix schema")
         if not registry["version_supported"]:
@@ -85,12 +87,12 @@ def run_probe(
 
         text_action = '{"app":"api_docs","api":"show_app_descriptions","arguments":{}}'
         token_ids = np.asarray([[ord(character) for character in text_action]], dtype=np.int64)
-        concrete = manager.resolve_exact_effect_schemas(
-            [registry],
-            [text_action],
-            token_ids,
-            np.ones_like(token_ids),
-            _CharacterTokenizer(),
+        concrete = exact_adapter.resolve_effect_schemas(
+            schemas=[registry],
+            text_actions=[text_action],
+            response_token_ids=token_ids,
+            response_mask=np.ones_like(token_ids),
+            tokenizer=_CharacterTokenizer(),
         )[0]
         if concrete["resolution_fallback"]:
             raise AssertionError("valid structured action did not resolve an argument span")
@@ -99,7 +101,7 @@ def run_probe(
             raise AssertionError(f"unexpected resolved spans: {span_buckets}")
 
         _, rewards, dones, step_infos = manager.step([text_action])
-        post_snapshot = manager.exact_credit_snapshots()[0]
+        post_snapshot = exact_adapter.snapshots()[0]
         if post_snapshot["factor_ids"] != pre_snapshot["factor_ids"]:
             raise AssertionError("AppWorld factor schema changed after a read-only API call")
         changed_factor_count = sum(
