@@ -14,13 +14,16 @@ the update instead of silently falling back to a biased estimator.
    channels close to their native end-to-end reward mass; process-verifier
    channels close to zero. Their pathwise sum is exactly the episode return.
 3. A prefix-predictable effect schema routes future atoms to response spans.
-   Sokoban, ALFWorld, and WebShop conservatively retain all future factors
+   Sokoban, legacy planner ALFWorld, and WebShop conservatively retain all future factors
    because observation history can mediate later policy actions. AppWorld uses
    full Exact-G: its evaluator is compiled into per-test model read sets, its
    strict one-call JSON action is split into selector and prefix-known argument
    spans, and API possible writes are intersected with factor reads. Unknown
    evaluator constructs, unsupported AppWorld versions, and invalid actions
    widen routes instead of dropping causal edges.
+   Predicate ALFWorld uses source-checked PDDL, explicit model commits, permanent
+   execution guards and prefix-certified invariants; see
+   [the ALFWorld Exact-G specification](../../docs/alfworld_exact_g.md).
 4. `compute_exact_advantage` writes span credit onto response tokens and masks
    data-parallel copy padding. `seq-mean-token-sum` makes the score of a span the
    sum of its token log probabilities.
@@ -43,7 +46,7 @@ observed environment reward; no distance, deadlock, or other heuristic shaping
 factor is part of the default schema. The adapter is source-locked to
 `mpSchrader/gym-sokoban@8e06e44e8bf3bb8bc73eeb1e7f0354508ce3fc89`.
 
-The ALFWorld snapshot accumulates TextWorld's official per-step
+The legacy ALFWorld planner snapshot (`ALFWORLD_EXACT_SIGNAL=planner`) accumulates TextWorld's official per-step
 `intermediate_reward` definition in one process-verifier channel. Inform7 games
 use the native numeric field. ALFWorld's current `.tw-pddl` games leave that
 field unset, so the adapter requests TextWorld PddlEnv's own replanned
@@ -54,11 +57,18 @@ each checkpoint delta against the independent policy-length calculation. This
 planner compatibility path adds CPU cost but does not add environment steps or
 read PDDL facts. The process channel closes to zero,
 while ALFWorld's existing binary `10 * won` episode return remains entirely in
-the opaque target. EXACT does not read `facts`, `traj_data.json`, or a handwritten
+the opaque target. This legacy mode does not read `facts`, `traj_data.json`, or a handwritten
 PDDL goal decomposition. Verifier values are training-only and are never added
 to the policy prompt. The locked sources are
 `alfworld/alfworld@aaba6870f86c5be6a08a491f32a50b906227bc3e` and
 `microsoft/TextWorld@ebae03b2a65440f8baed46a885811719b1b948f2`.
+
+The default ALFWorld research launcher now selects `predicates`: fixed equal-weight
+dynamic goal leaves and their direct grounded precondition support, compiled from
+the loaded game's embedded PDDL. These are new process observations, not official
+intermediate rewards. They close to zero; `10 * won` stays global and opaque.
+Canonical facts and certificates stay on the training side. Commit protections
+are chosen by the model's own JSON actions, never by hidden goal matching.
 
 WebShop uses one process channel produced by its own `get_reward` scorer on the
 current item state, matching the official `WebEnv.score` gate that scoring is
@@ -105,8 +115,10 @@ definition, that the process channel has zero target mass, and that the binary
 contains only aggregate signal diagnostics, not benchmark paths, observations,
 or actions.
 
-The launcher defaults Sokoban, ALFWorld, and WebShop to `EXACT_MODE=temporal`
-(Exact-T), and AppWorld to `EXACT_MODE=graph` (Exact-G). Set `EXACT_MODE`
+The launcher defaults Sokoban and WebShop to `EXACT_MODE=temporal`
+(Exact-T), and predicate ALFWorld and AppWorld to `EXACT_MODE=graph` (Exact-G).
+ALFWorld also enables commit guards by default; its legacy planner mode defaults
+to temporal. Set `EXACT_MODE`
 explicitly only for a declared ablation; the resolved mode is recorded in the
 experiment name, Hydra config, and run manifest.
 

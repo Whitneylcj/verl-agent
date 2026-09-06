@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
@@ -204,10 +205,14 @@ class SearchEnvironmentManager(EnvironmentManagerBase):
 class AlfWorldEnvironmentManager(EnvironmentManagerBase):
     def __init__(self, envs, projection_f, config):
         self.memory = SimpleMemory()
+        self.exact_predicates = getattr(envs, "exact_signal", "planner") == "predicates"
+        self._exact_public = []
         super().__init__(envs, projection_f, config)
     
     def reset(self, kwargs):
         text_obs, image_obs, infos = self.envs.reset()
+        if self.exact_predicates:
+            self._exact_public = [info["extra.exact"] for info in infos]
         self.gamefile = parse_gamefile(infos)
         # initialize the history buffer
         self.memory.reset(batch_size = len(text_obs))
@@ -219,6 +224,8 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         return {'text': full_text_obs, 'image': image_obs, 'anchor': text_obs}, infos
     
     def step(self, text_actions: List[str]):
+        if self.exact_predicates:
+            return self._step_exact_json(text_actions)
         from agent_system.environments.env_package.alfworld.projection import (
             alfworld_response_syntax_valid,
         )
@@ -252,6 +259,42 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         dones = to_numpy(dones)
 
         return next_observations, rewards, dones, infos
+
+    def _step_exact_json(self, text_actions):
+        text_obs, images, rewards, dones, infos = self.envs.step(list(text_actions))
+        self.memory.store({'text_obs': self.pre_text_obs, 'action': list(text_actions)})
+        self.pre_text_obs = text_obs
+        self._exact_public = [info["extra.exact"] for info in infos]
+        if infos[0].get("extra.gamefile") is None:
+            infos = set_gamefile(infos, self.gamefile)
+        for info in infos:
+            public = info["extra.exact"]
+            info["is_action_syntax_valid"] = to_numpy(public["syntax_valid"])
+            info["is_action_execution_valid"] = to_numpy(public["execution_valid"])
+            info["is_action_valid"] = to_numpy(public["syntax_valid"] and public["execution_valid"])
+        observations = {'text': self.build_text_obs(text_obs, self.envs.get_admissible_commands), 'image': images, 'anchor': text_obs}
+        return observations, to_numpy(rewards), to_numpy(dones), infos
+
+    def exact_effect_schemas(self, snapshots):
+        from recipe.exact.env_probes import conservative_future_schema
+        if not self.exact_predicates:
+            return [conservative_future_schema(value, "alfworld") for value in snapshots]
+        return [value["prefix_registry"] for value in snapshots]
+
+    def resolve_exact_effect_schemas(self, schemas, text_actions, response_token_ids, response_mask, tokenizer):
+        from recipe.exact.alfworld_adapter import resolve_effect_schema
+        if not self.exact_predicates:
+            return schemas
+        tokens, mask = to_numpy(response_token_ids), to_numpy(response_mask).astype(bool)
+        if tokens.shape != mask.shape or tokens.shape[0] != len(schemas):
+            raise ValueError('ALFWorld response tokens/mask/schema shapes do not align')
+        resolved = []
+        for index, schema in enumerate(schemas):
+            positions = np.flatnonzero(mask[index])
+            if not np.array_equal(positions, np.arange(len(positions))):
+                raise ValueError('ALFWorld valid response tokens must form a contiguous prefix')
+            resolved.append(resolve_effect_schema(schema, tokens[index, positions].tolist(), tokenizer))
+        return resolved
     
     def extract_task(self, text_obs: List[str]):
         for obs in text_obs:
@@ -268,6 +311,19 @@ class AlfWorldEnvironmentManager(EnvironmentManagerBase):
         This function builds the text observation for the agent.
         """
         postprocess_text_obs = []
+        if self.exact_predicates:
+            if not init and self.config.env.history_length > 0:
+                histories, _ = self.memory.fetch(self.config.env.history_length, obs_key="text_obs", action_key="action")
+            else:
+                histories = [""] * len(text_obs)
+            for index, observation in enumerate(text_obs):
+                public = self._exact_public[index]
+                postprocess_text_obs.append(ALFWORLD_EXACT_JSON_TEMPLATE.format(
+                    task=self.tasks[index], observation=observation, history=histories[index],
+                    actions=json.dumps(public["actions"], ensure_ascii=False),
+                    protections=json.dumps(public["protections"], ensure_ascii=False),
+                ))
+            return postprocess_text_obs
         if not init and self.config.env.history_length > 0:
             memory_contexts, valid_lens = self.memory.fetch(
                     self.config.env.history_length,
@@ -834,6 +890,8 @@ def make_envs(config):
         val_envs = GymCardEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
     elif "alfworld" in config.env.env_name.lower():
+        if config.env.alfworld.get('exact_signal', 'planner') == 'predicates' and config.env.env_name != 'alfworld/AlfredTWEnv':
+            raise ValueError('ALFWorld predicate certificates require the TextWorld backend')
         from agent_system.environments.env_package.alfworld import alfworld_projection, build_alfworld_envs
         if config.env.env_name == 'alfworld/AlfredThorEnv':
             alf_config_path = os.path.join(os.path.dirname(__file__), 'env_package/alfworld/configs/config_tw.yaml')
@@ -844,6 +902,9 @@ def make_envs(config):
 
         env_kwargs = {
             'eval_dataset': config.env.alfworld.eval_dataset, # 'eval_in_distribution' or 'eval_out_of_distribution'
+            'exact_signal': config.env.alfworld.get('exact_signal', 'planner'),
+            'commit_guard': config.env.alfworld.get('commit_guard', True),
+            'max_steps': config.env.max_steps,
         }
         _envs = build_alfworld_envs(alf_config_path, config.env.seed, config.data.train_batch_size, group_n, is_train=True, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)
         _val_envs = build_alfworld_envs(alf_config_path, config.env.seed + 1000, config.data.val_batch_size, 1, is_train=False, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)

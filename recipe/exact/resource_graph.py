@@ -8,6 +8,32 @@ from recipe.exact.appworld_schema import ALL_RESOURCE, UNKNOWN_RESOURCE
 from recipe.exact.credit_spec import CreditAtom, SpanRoute
 
 
+def compile_alfworld_prefix_route(record, schema, atoms, step_id):
+    """Validate a typed prefix certificate and route fixed-universe atoms.
+
+    The ALFWorld envelope already quantifies over *all* future policies. It
+    must not be replaced with an observed action-to-action provenance trace.
+    """
+    cert = record.get("certificate")
+    if not isinstance(cert, dict) or cert.get("reason") != "boolean-powerset-reachability-with-permanent-write-guards-v1":
+        raise ValueError("missing ALFWorld prefix certificate")
+    for cert_key, schema_key in (("source_hash", "source_revision"), ("state_hash", "state_hash"), ("protections", "protections")):
+        if cert.get(cert_key) != schema.get(schema_key):
+            raise ValueError(f"ALFWorld certificate mismatch: {cert_key}")
+    if cert["horizon"] != schema["fixed_horizon"] - step_id + 1 or cert["prefix_length"] < 0:
+        raise ValueError("ALFWorld certificate has invalid prefix horizon")
+    factor_ids = set(schema["factor_ids"])
+    immediate, future = set(cert["immediate_factor_ids"]), set(cert["future_factor_ids"])
+    invariants = dict(cert["invariant_values"])
+    if not immediate <= factor_ids or not future <= factor_ids or set(invariants) != factor_ids - future:
+        raise ValueError("ALFWorld certificate factor coverage mismatch")
+    if set(invariants) & immediate:
+        raise ValueError("a future-invariant channel cannot change immediately")
+    if any(value not in (0.0, 1.0) for value in invariants.values()):
+        raise ValueError("invalid ALFWorld invariant value")
+    return tuple(atom.atom_id for atom in atoms if atom.atom_kind == "opaque_target" or (atom.step_id >= step_id and atom.channel_id in (immediate if atom.atom_kind == "delta" and atom.step_id == step_id else future)))
+
+
 def resource_sets_overlap(left: Sequence[str], right: Sequence[str]) -> bool:
     left_set = set(left)
     right_set = set(right)

@@ -49,13 +49,21 @@ def _preflight(environment: str, *overrides: str, **extra_env: str) -> str:
     return result.stdout
 
 
-@pytest.mark.parametrize("environment", ("sokoban", "alfworld", "webshop"))
+@pytest.mark.parametrize("environment", ("sokoban", "webshop"))
 def test_stage_two_environments_default_to_exact_t(environment):
     assert _run_dir(environment).startswith("exact_temporal_")
 
 
 def test_appworld_defaults_to_exact_g():
     assert _run_dir("appworld").startswith("exact_graph_")
+
+
+def test_alfworld_predicates_default_to_guarded_graph_with_distinct_ablations():
+    default = _run_dir("alfworld")
+    assert default.startswith("exact_graph_") and default.endswith("predicates_guardTrue")
+    assert _run_dir("alfworld", ALFWORLD_EXACT_SIGNAL="planner").startswith("exact_temporal_")
+    assert _run_dir("alfworld", EXACT_MODE="prefix_baseline").startswith("exact_prefix_baseline_")
+    assert _run_dir("alfworld", ALFWORLD_COMMIT_GUARD="False").endswith("predicates_guardFalse")
 
 
 def test_exact_mode_override_is_preserved():

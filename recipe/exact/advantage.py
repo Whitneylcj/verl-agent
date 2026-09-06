@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -16,7 +16,7 @@ from recipe.exact.core_exact import (
     compute_exact_credits,
 )
 from recipe.exact.credit_spec import EffectSpan, FactorSnapshot, SpanRoute
-from recipe.exact.resource_graph import compile_resource_graph_routes
+from recipe.exact.resource_graph import compile_alfworld_prefix_route, compile_resource_graph_routes
 
 
 def _config_get(config: Any, key: str, default: Any = None) -> Any:
@@ -157,6 +157,9 @@ def _compile_row_routes(
         if opaque:
             descendant_ids = None
             fallback_count += 1
+        elif route_kind == "alfworld_prefix":
+            descendant_ids = compile_alfworld_prefix_route(record, schema, atoms, step_id)
+            route_kind = "explicit"
         elif route_kind == "resource_graph":
             descendant_ids = ()
         else:
@@ -272,16 +275,47 @@ def compute_exact_advantage(
     appworld_version_supported: list[float] = []
     appworld_source_supported: list[float] = []
     appworld_factor_compile_fallbacks: list[float] = []
+    alfworld_comparisons = []
+    alfworld_semantic_seconds = 0.0
 
     for trajectory_id, rows in trajectory_rows.items():
         snapshots = _trajectory_snapshots(rows, data)
+        real_step_count = len(snapshots) - 1
+        is_alfworld = snapshots[0].schema_version == "exact.alfworld.pddl.predicates.v1"
+        if mode == "prefix_baseline" and not is_alfworld:
+            raise ValueError("prefix_baseline requires ALFWorld predicate certificates")
+        if is_alfworld:
+            records = [data.non_tensor_batch["exact_factor_pre"][rows[0]], *(data.non_tensor_batch["exact_factor_post"][row] for row in rows)]
+            alfworld_semantic_seconds += sum(float(record.get("capture_seconds", 0)) + float(record.get("semantic_compile_seconds", 0)) for record in records)
+            for position, row in enumerate(rows):
+                schema = data.non_tensor_batch["exact_effect_schema"][row]
+                pre = snapshots[position]
+                if not isinstance(schema, Mapping) or schema.get("kind") != "alfworld-concrete-effect-v1":
+                    raise ValueError("missing ALFWorld concrete prefix schema")
+                if schema.get("source_revision") != pre.source_revision or tuple(schema.get("factor_ids", ())) != pre.factor_ids:
+                    raise ValueError("ALFWorld prefix schema differs from the snapshot source")
+                if not np.array_equal(schema.get("pre_values"), pre.values):
+                    raise ValueError("ALFWorld prefix schema differs from the pre-state values")
+                for span in schema["spans"]:
+                    cert = span["certificate"]
+                    invariant = dict(cert["invariant_values"])
+                    for factor_index, key in enumerate(pre.factor_ids):
+                        if key in invariant and any(state.values[factor_index] != invariant[key] for state in snapshots[position:]):
+                            raise ValueError("observed transition refutes an ALFWorld invariant certificate")
+                        if key not in cert["immediate_factor_ids"] and snapshots[position + 1].values[factor_index] != pre.values[factor_index]:
+                            raise ValueError("observed transition refutes an ALFWorld immediate certificate")
+            horizons = {int(data.non_tensor_batch["exact_effect_schema"][row]["fixed_horizon"]) for row in rows}
+            if len(horizons) != 1 or next(iter(horizons)) < real_step_count:
+                raise ValueError("inconsistent ALFWorld fixed horizon")
+            horizon = next(iter(horizons))
+            snapshots = (*snapshots, *(replace(snapshots[-1], checkpoint_id=index) for index in range(len(snapshots), horizon + 1)))
         potential = _make_potential(snapshots[0], config)
         episode_return = _trajectory_return(rows, data)
         conserved = build_scoped_conserved_atoms(
             snapshots,
             episode_return=episode_return,
             potential=potential,
-            tolerance=float(_config_get(config, "conservation_tolerance", 1e-8)),
+            tolerance=float(_config_get(config, "conservation_tolerance", 1e-10)),
         )
         if snapshots[0].schema_version == "exact.sokoban.official_reward.v1":
             tolerance = float(_config_get(config, "conservation_tolerance", 1e-8))
@@ -327,13 +361,20 @@ def compute_exact_advantage(
             conserved,
             routes,
             alpha_by_bucket=alpha_by_bucket,
-            mode=mode,
+            mode="graph" if mode == "prefix_baseline" else mode,
         )
+        comparison = None
+        if is_alfworld:
+            from recipe.exact.alfworld_metrics import compare_alfworld_credits
+
+            comparison = compare_alfworld_credits(conserved, routes, snapshots, potential, placements, data, real_step_count)
+            alfworld_comparisons.append(comparison["metrics"])
         graph_compile_seconds += time.perf_counter() - graph_started
-        for placement, span_credit in zip(placements, result.span_credits):
+        for span_index, (placement, span_credit) in enumerate(zip(placements, result.span_credits, strict=True)):
             row, start, end = placement
-            advantages[row, start:end] = float(span_credit.credit * trajectory_scale)
-            raw_credits.append(span_credit.credit)
+            credit = comparison["prefix_baseline_credits"][span_index] if mode == "prefix_baseline" else span_credit.credit
+            advantages[row, start:end] = float(credit * trajectory_scale)
+            raw_credits.append(credit)
 
         conservation_errors.append(conserved.conservation_error)
         closure_abs_masses.append(conserved.closure_abs_mass)
@@ -368,6 +409,7 @@ def compute_exact_advantage(
                 "closure_route_density": result.closure_route_density,
                 "atoms": [asdict(atom) for atom in conserved.atoms],
                 "spans": [asdict(span_credit) for span_credit in result.span_credits],
+                **({"alfworld_comparison": comparison, "prefix_schemas": [data.non_tensor_batch["exact_effect_schema"][row] for row in rows]} if is_alfworld else {}),
             }
         )
 
@@ -393,6 +435,7 @@ def compute_exact_advantage(
         probe_counts = np.asarray(data.non_tensor_batch["exact_probe_count"], dtype=np.float64)
         probe_count = float(probe_counts[~exact_padding].sum())
     metrics = {
+        "exact/alfworld/semantic_seconds": alfworld_semantic_seconds,
         "exact/conservation_error_max": float(max(conservation_errors, default=0.0)),
         "exact/closure_abs_mass_mean": float(np.mean(closure_abs_masses)),
         "exact/closure_abs_ratio_mean": float(np.mean(closure_abs_ratios)),
@@ -429,6 +472,10 @@ def compute_exact_advantage(
                 "exact/appworld_factor_compile_fallback_rate": float(np.mean(appworld_factor_compile_fallbacks)),
             }
         )
+    if alfworld_comparisons:
+        for key in alfworld_comparisons[0]:
+            values = [record[key] for record in alfworld_comparisons]
+            metrics[f"exact/alfworld/{key}"] = float(max(values) if key.endswith("_max") else np.mean(values))
     for quantile in (5, 25, 50, 75, 95):
         metrics[f"exact/credit_p{quantile:02d}"] = float(np.percentile(credit_array, quantile))
     for bucket, alpha in alpha_by_bucket.items():

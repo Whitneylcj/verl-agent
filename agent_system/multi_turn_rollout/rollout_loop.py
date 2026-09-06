@@ -389,11 +389,21 @@ class TrajectoryCollector:
 
             batch_input.meta_info = gen_batch.meta_info
 
+            # Predicate ALFWorld absorbs terminated environments. Do not sample
+            # policy continuations for their logical fixed-horizon extension.
+            generation_rows = np.flatnonzero(active_masks) if getattr(envs, "exact_predicates", False) else np.arange(batch_size)
+            generation_input = batch_input[generation_rows] if len(generation_rows) != batch_size else batch_input
             # pad to be divisible by dp_size
-            batch_input_padded, pad_size = pad_dataproto_to_divisor(batch_input, actor_rollout_wg.world_size)
+            batch_input_padded, pad_size = pad_dataproto_to_divisor(generation_input, actor_rollout_wg.world_size)
             batch_output_padded = actor_rollout_wg.generate_sequences(batch_input_padded)
             # # unpad
             batch_output = unpad_dataproto(batch_output_padded, pad_size=pad_size)
+            if len(generation_rows) != batch_size:
+                restore_rows = np.zeros(batch_size, dtype=np.int64)
+                restore_rows[generation_rows] = np.arange(len(generation_rows))
+                # Copies only fill inactive batch slots; active_masks excludes
+                # them from all episode scores and the final training batch.
+                batch_output = batch_output[restore_rows]
 
             batch.non_tensor_batch['uid'] = uid_batch
             batch.non_tensor_batch['traj_uid'] = traj_uid

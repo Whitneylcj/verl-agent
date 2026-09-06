@@ -67,6 +67,7 @@ class AlfworldWorker:
         self._exact_previous_policy_length = None
         self._exact_last_intermediate_reward = None
         self._exact_snapshot = None
+        self._exact_signal = config.get("exact", {}).get("signal", "planner")
 
     @staticmethod
     def _single_batch_info(infos, key):
@@ -85,6 +86,10 @@ class AlfworldWorker:
 
     def _refresh_exact_snapshot(self, infos, *, reset=False):
         from recipe.exact.env_probes import alfworld_intermediate_reward_snapshot
+
+        if self._exact_signal == "predicates":
+            self._exact_snapshot = self._single_batch_info(infos, "extra.exact")["snapshot"]
+            return
 
         raw_step_reward = self._single_batch_info(infos, "intermediate_reward")
         raw_policy = self._single_batch_info(infos, "policy_commands")
@@ -177,7 +182,17 @@ class AlfworldEnvs(gym.Env):
         env_kwargs = env_kwargs or {}
         eval_dataset = env_kwargs.get('eval_dataset', 'eval_in_distribution')
         config = load_config_file(alf_config_path)
+        self.exact_signal = env_kwargs.get('exact_signal', 'planner')
+        if self.exact_signal not in {'planner', 'predicates'}:
+            raise ValueError('unsupported ALFWorld EXACT signal')
+        config['exact'] = {
+            'signal': self.exact_signal,
+            'commit_guard': bool(env_kwargs.get('commit_guard', True)),
+            'horizon': int(env_kwargs.get('max_steps', 50)),
+        }
         env_type = config['env']['type']
+        if self.exact_signal == 'predicates' and env_type != 'AlfredTWEnv':
+            raise ValueError('ALFWorld predicate certificates require TextWorld')
         base_env = get_environment(env_type)(config, train_eval='train' if is_train else eval_dataset)
         self.multi_modal = (env_type == 'AlfredThorEnv')
         self.num_processes = env_num * group_n

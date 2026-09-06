@@ -42,8 +42,9 @@ case "${environment_name}" in
     ;;
   alfworld)
     env_name=alfworld/AlfredTWEnv
-    default_exact_mode=temporal
+    default_exact_mode=graph
     max_steps=30
+    max_prompt_length=4096
     max_response_length=${MAX_RESPONSE_LENGTH:-512}
     ;;
   webshop)
@@ -67,6 +68,11 @@ case "${environment_name}" in
     exit 2
     ;;
 esac
+alfworld_signal=${ALFWORLD_EXACT_SIGNAL:-predicates}
+alfworld_commit_guard=${ALFWORLD_COMMIT_GUARD:-True}
+if [[ "${environment_name}" == "alfworld" && "${alfworld_signal}" == "planner" ]]; then
+  default_exact_mode=temporal
+fi
 exact_mode=${exact_mode:-${default_exact_mode}}
 prompt_profile=${prompt_profile:-${default_prompt_profile:-benchmark}}
 appworld_action_mode=python
@@ -83,6 +89,9 @@ fi
 loss_tag=${loss_agg_mode//-/_}
 profile_tag=${prompt_profile//[^[:alnum:]._-]/_}
 experiment_name="${algorithm_name}_${exact_mode}_${loss_tag}_${profile_tag}_${environment_name}_${model_tag}_seed${seed}"
+if [[ "${environment_name}" == "alfworld" ]]; then
+  experiment_name="${experiment_name}_${alfworld_signal}_guard${alfworld_commit_guard}"
+fi
 run_output_dir="${output_root}/${experiment_name}"
 prepared_data_root="${data_root}/train${train_size}_val${validation_size}"
 train_file="${prepared_data_root}/text/train.parquet"
@@ -133,6 +142,8 @@ common_overrides=(
   "env.prompt_profile=${prompt_profile}"
   "env.seed=${seed}"
   "env.max_steps=${max_steps}"
+  "env.alfworld.exact_signal=${alfworld_signal}"
+  "env.alfworld.commit_guard=${alfworld_commit_guard}"
   "env.rollout.n=${group_size}"
   "env.sokoban.mode=tiny_rgb_array"
   "env.appworld.action_mode=${appworld_action_mode}"

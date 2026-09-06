@@ -49,6 +49,50 @@ class AlfredInfos(textworld.core.Wrapper):
         return state
 
 
+class AlfredExactInstrumentation(textworld.core.Wrapper):
+    """Instrument native state before the batched Gym adapter discards it."""
+
+    def __init__(self, horizon, guard_enabled=True):
+        super().__init__()
+        self.horizon = horizon
+        self.guard_enabled = guard_enabled
+        self.session = None
+
+    def reset(self):
+        from recipe.exact.alfworld_adapter import AlfworldExactSession, verify_native_engine
+
+        verify_native_engine()
+        state = super().reset()
+        self.session = AlfworldExactSession(self.unwrapped._game_data, self.horizon, self.guard_enabled)
+        self.session.capture(state)
+        self._exact_done = bool(state["won"])
+        self._publish(state)
+        return state
+
+    def _publish(self, state, decision=None):
+        state["extra.exact"] = {
+            "snapshot": self.session.record,
+            "actions": self.session.public_actions,
+            "protections": self.session.public_protections(),
+            "syntax_valid": decision.syntax_valid if decision else True,
+            "execution_valid": decision.execution_valid if decision else True,
+            "reason": decision.reason if decision else "reset",
+        }
+        self._exact_state = state
+
+    def step(self, response):
+        if self.session is None:
+            raise RuntimeError("ALFWorld Exact requires reset before step")
+        if self._exact_done:
+            return self._exact_state, 0.0, True
+        decision = self.session.prepare(response)
+        state, score, done = super().step(decision.command)
+        self.session.finish(decision, state)
+        self._exact_done = bool(done) or self.session.step_id >= self.horizon
+        self._publish(state, decision)
+        return state, score, self._exact_done
+
+
 # Enum for the supported types of AlfredExpert.
 class AlfredExpertType:
     HANDCODED = "handcoded"
@@ -258,6 +302,16 @@ class AlfredTWEnv:
             policy_commands=True,
             extras=["gamefile"],
         )
+        exact_config = self.config.get("exact", {})
+        if exact_config.get("signal", "planner") == "predicates":
+            wrappers.append(AlfredExactInstrumentation(
+                horizon=int(exact_config["horizon"]),
+                guard_enabled=bool(exact_config.get("commit_guard", True)),
+            ))
+            request_infos.extras.append("exact")
+            request_infos.facts = False  # Raw canonical facts are read inside the wrapper.
+            request_infos.intermediate_reward = False
+            request_infos.policy_commands = False
         expert_type = self.config["env"]["expert_type"]
         training_method = self.config["general"]["training_method"]
 

@@ -13,6 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ALFWORLD_EXACT_JSON_TEMPLATE = '''Complete the household task using one action per response.
+Task: {task}
+Recent history: {history}
+Current observation: {observation}
+Available actions (commit=false examples): {actions}
+Your previously committed protections: {protections}
+Return only a JSON object with exactly these fields in this order: op, args, commit.
+Use the operation names and object names shown in the available actions.
+You may set commit=true on heat, cool, clean, toggle, or put to permanently
+protect the object property or placement established by that successful action
+when commit guards are enabled. Runs without guards ignore the commit flag.
+Commit only when you intend to preserve it for the rest of this task. There is
+no undo. Moves that destroy a protected fact are rejected and consume one step.
+Do not commit navigation, hand occupancy, or container open/closed state.
+Example: {{"op":"heat","args":["mug 1","microwave 1"],"commit":true}}
+'''
+
 # --------------------- ALFWorld --------------------- #
 ALFWORLD_QWEN_SMALL_GUIDED_TEMPLATE_NO_HIS = """
 You are an expert agent operating in the ALFRED Embodied Environment.

@@ -136,6 +136,8 @@ def build_manifest(
     tracked_status = _command(("git", "status", "--porcelain", "--untracked-files=no"), cwd=repo_root)
     redacted_overrides = [redact_override(value) for value in overrides]
     override_digest = hashlib.sha256(json.dumps(redacted_overrides, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    from recipe.exact.alfworld_adapter import NATIVE_SOURCE_BLOBS
+    from recipe.exact.alfworld_semantics import SUPPORTED_DOMAIN_HASH
     from recipe.exact.env_probes import (
         ALFWORLD_SOURCE_REVISION,
         APPWORLD_SOURCE_REVISION,
@@ -193,6 +195,11 @@ def build_manifest(
             "textworld": TEXTWORLD_SOURCE_REVISION,
             "webshop": WEBSHOP_SOURCE_REVISION,
             "appworld": APPWORLD_SOURCE_REVISION,
+        },
+        "alfworld_predicate_semantics": {
+            "domain_ast_sha256": SUPPORTED_DOMAIN_HASH,
+            "native_source_git_blobs": NATIVE_SOURCE_BLOBS,
+            "problem_source": "loaded game.tw-pddl; per-trajectory hash in prefix schemas",
         },
         "hydra_overrides": redacted_overrides,
         "hydra_overrides_sha256": override_digest,

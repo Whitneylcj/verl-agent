@@ -254,8 +254,8 @@ algorithm:
     similarity_thresh: 0.95 # similarity threshold for GiGPO (0.0, 1.0)
   exact:
     conservation_schema: scoped_v2
-    mode: graph # temporal / graph / graph_cv
-    conservation_tolerance: 1.0e-8
+    mode: graph # temporal / graph / graph_cv / prefix_baseline (ALFWorld predicates)
+    conservation_tolerance: 1.0e-10
     potential:
       # Omit weights to use a fixed normalized sum of environment factors.
       scale: 1.0
@@ -344,6 +344,8 @@ env:
     n: 1 # the group number of envs (for GRPO and GiGPO).
   alfworld:
     eval_dataset: eval_in_distribution
+    exact_signal: planner # EXACT launcher selects predicates; old recipes unchanged
+    commit_guard: True
   search:
     log_requests: false
     search_url: "http://127.0.0.1:8000/retrieve" # also support multiple urls: ["http://127.0.0.1:8000/retrieve", "http://127.0.0.1:8001/retrieve"]
