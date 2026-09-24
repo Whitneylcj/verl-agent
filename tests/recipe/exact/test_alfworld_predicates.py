@@ -143,6 +143,27 @@ def test_failed_commit_and_native_mismatch_stop_before_protection():
     assert not current.protections
 
 
+def test_native_conditional_effect_cache_projects_only_irrelevant_auxiliaries():
+    current = session(TASKS[5])
+    assert current.model.auxiliary_shadow_facts == {fact("isOn", "lamp")}
+    decision = current.prepare(response("toggle", "lamp"))
+    expected = decision.expected_facts
+    assert fact("isOn", "lamp") in expected
+    actual = expected - {fact("isOn", "lamp")}
+    current.finish(decision, native_state(current.model, actual))
+    assert fact("isToggled", "lamp") in current.state["_facts"]
+    for changed in [fact("isToggled", "lamp"), fact("atLocation", "a", "lt"), fact("isClean", "apple1"), fact("unknown", "lamp")]:
+        with pytest.raises(ValueError, match="native transition"):
+            current.model.validate_transition(expected, actual ^ {changed})
+    # If a goal reads isOn, it is no longer an irrelevant cache value.
+    data = game_data(TASKS[5])
+    data["pddl_problem"] = data["pddl_problem"].replace("(isToggled ?ot)", "(isOn ?ot)")
+    model = compile_semantics(data)
+    assert not model.auxiliary_shadow_facts
+    with pytest.raises(ValueError, match="native transition"):
+        model.validate_transition(expected, actual)
+
+
 def test_prefix_certificates_do_not_look_at_suffix_or_new_commit():
     current = session()
     execute(current, "take", "apple1", "table")

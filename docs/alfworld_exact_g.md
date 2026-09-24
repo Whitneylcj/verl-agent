@@ -51,7 +51,11 @@ PPO clipping、KL、off-policy ratio 与重复优化不在这个恒等式的保�
   当前动作映射复用 `_valid_actions.mapping` 与 `_valid_commands`；不读取其空的
   `preconditions/postconditions` 来猜效果。
 - snapshot 使用 reset/step 已有 `_facts`、`_entity_infos`；将显式负事实规范化为
-  闭世界布尔状态。静态事实、原生 won、实际完整状态差分均与编译语义核对。
+  闭世界布尔状态。静态事实、原生 won、实际状态差分均与编译语义核对。
+  Fast Downward 20.6.4 的 `apply_operator` 会向 Python 导出未触发的条件效果，
+  因而 TextWorld 的 `isOn` 缓存可能与原生状态不同。编译器从通道、提交保护和
+  全部动作前置条件逆向闭包，只忽略被证明无法影响这些量的条件效果辅助事实；
+  若某个目标或依赖读取该事实，则仍严格核验。其他差异一律停止，不新增状态查询。
   不增加环境查询或反事实执行。未知域、THOR、缺失状态或不一致都不能获得证书。
 
 ## 动作、提交与可达性证书

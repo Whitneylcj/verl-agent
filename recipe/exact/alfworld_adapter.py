@@ -365,8 +365,7 @@ class AlfworldExactSession:
         before = canonical_facts(self.state["_facts"])
         after = canonical_facts(native_state["_facts"])
         expected = decision.expected_facts if decision.execution_valid else before
-        if after != expected:
-            raise ValueError("native transition disagrees with compiled PDDL effects")
+        self.model.validate_transition(expected, after)
         if decision.execution_valid:
             self.protections |= frozenset(decision.commit_facts)
         self.step_id += 1

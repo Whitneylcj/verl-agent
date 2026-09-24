@@ -261,6 +261,24 @@ class SemanticModel:
         self.channel_kinds = {fact.key: "goal" if fact in goal_facts else "support" for fact in self.channels}
         self.universe = frozenset(self.channels) | frozenset(fact for action in self.actions for fact in read_facts(action.precondition)) | frozenset(effect.fact for action in self.actions for effect in action.effects)
         self.universe |= frozenset(fact for action in self.actions for effect in action.effects for fact in read_facts(effect.condition))
+        # Fast Downward's apply_operator exports every conditional effect,
+        # including non-fired ones. TextWorld's Python fact cache can therefore
+        # disagree with the native state for auxiliary values (ALFWorld isOn).
+        # Only project out conditional targets proven unable to influence any
+        # channel, guard, or action's applicability, even through other effects.
+        relevant = set(self.channels)
+        relevant.update(fact for fact in self.universe if fact.predicate in PROTECTABLE)
+        relevant.update(fact for action in self.actions for fact in read_facts(action.precondition))
+        while True:
+            expanded = relevant | {fact for action in self.actions for effect in action.effects if effect.fact in relevant for fact in read_facts(effect.condition)}
+            if expanded == relevant:
+                break
+            relevant = expanded
+        self.auxiliary_shadow_facts = frozenset(effect.fact for action in self.actions for effect in action.effects if effect.condition is not True) - relevant
+
+    def validate_transition(self, expected: frozenset[Fact], actual: frozenset[Fact]) -> None:
+        if (expected ^ actual) - self.auxiliary_shadow_facts:
+            raise ValueError("native transition disagrees with compiled PDDL effects")
 
     def _fact(self, node, binding):
         if not node or node[0] not in self.predicates or len(node) - 1 != self.predicates[node[0]]:
