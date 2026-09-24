@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from recipe.exact.alfworld_adapter import compile_prefix_certificate, resolve_effect_schema
-from recipe.exact.alfworld_semantics import canonical_facts, compile_semantics, snapshot, truth_values
+from recipe.exact.alfworld_semantics import RELEASE_DOMAIN_HASH, SUPPORTED_DOMAIN_HASH, canonical_facts, compile_semantics, snapshot, truth_values
 from tests.recipe.exact.alfworld_fixtures import TASKS, CharacterTokenizer, execute, fact, game_data, native_state, response, session
 
 
@@ -99,6 +99,27 @@ def test_natural_clean_monotonicity_and_future_unlocking():
     execute(current, "clean", "apple1", "sink")
     assert not current.protections
     assert dict(current.record["prefix_registry"]["invariant_values"])["isclean(apple1)"] == 1
+
+
+@pytest.mark.parametrize("released", [False, True])
+@pytest.mark.parametrize("sink_type", ["Sink", "SinkBasin"])
+def test_official_domain_variants_preserve_clean_preconditions(released, sink_type):
+    data = game_data(TASKS[1])
+    if released:
+        data["pddl_domain"] = data["pddl_domain"].replace(";(receptacleType ?r SinkType)", "(receptacleType ?r SinkType)")
+    data["pddl_problem"] = data["pddl_problem"].replace("TableType SinkBasinType", "TableType SinkType SinkBasinType")
+    data["pddl_problem"] = data["pddl_problem"].replace("(receptacleType sink SinkBasinType)", f"(receptacleType sink {sink_type}Type)")
+    model = compile_semantics(data)
+    assert model.domain_hash == (RELEASE_DOMAIN_HASH if released else SUPPORTED_DOMAIN_HASH)
+    held_at_sink = model.initial - {fact("atLocation", "a", "lt"), fact("inReceptacle", "apple1", "table")}
+    held_at_sink |= {fact("atLocation", "a", "ls"), fact("holds", "a", "apple1"), fact("holdsAny", "a")}
+    applicable = [action for action in model.actions if action.name == "cleanobject" and dict(action.bindings).get("?o") == "apple1" and truth_values(action.precondition, {f: frozenset({True}) for f in held_at_sink}) == frozenset({True})]
+    assert bool(applicable) == (released or sink_type == "SinkBasin")
+    for action in applicable:
+        assert fact("isClean", "apple1") in action.apply(held_at_sink)
+    data["pddl_domain"] = data["pddl_domain"].replace("(isHot ?o)", "(isClean ?o)")
+    with pytest.raises(ValueError, match="unsupported ALFWorld domain"):
+        compile_semantics(data)
 
 
 @pytest.mark.parametrize("bad", ["", "look", "{}", '{"op":"look","args":[],"commit":true}', '{"args":[],"op":"look","commit":false}', '{"op":"look","op":"look","args":[],"commit":false}', '{"op":"put","args":["apple1","table"],"commit":1}'])

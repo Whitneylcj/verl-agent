@@ -137,7 +137,7 @@ def build_manifest(
     redacted_overrides = [redact_override(value) for value in overrides]
     override_digest = hashlib.sha256(json.dumps(redacted_overrides, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
     from recipe.exact.alfworld_adapter import NATIVE_SOURCE_BLOBS
-    from recipe.exact.alfworld_semantics import SUPPORTED_DOMAIN_HASH
+    from recipe.exact.alfworld_semantics import SUPPORTED_DOMAIN_HASH, SUPPORTED_DOMAIN_HASHES
     from recipe.exact.env_probes import (
         ALFWORLD_SOURCE_REVISION,
         APPWORLD_SOURCE_REVISION,
@@ -198,6 +198,7 @@ def build_manifest(
         },
         "alfworld_predicate_semantics": {
             "domain_ast_sha256": SUPPORTED_DOMAIN_HASH,
+            "supported_domain_ast_sha256": sorted(SUPPORTED_DOMAIN_HASHES),
             "native_source_git_blobs": NATIVE_SOURCE_BLOBS,
             "problem_source": "loaded game.tw-pddl; per-trajectory hash in prefix schemas",
         },

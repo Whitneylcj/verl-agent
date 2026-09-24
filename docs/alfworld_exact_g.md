@@ -29,6 +29,12 @@ PPO clipping、KL、off-policy ratio 与重复优化不在这个恒等式的保�
 `compile_semantics(game_data)` 读取实际 `.tw-pddl` 的 `pddl_domain` 与
 `pddl_problem`，大小写规范化后计算 AST SHA256。支持域的固定哈希为
 `decd886f9a13e537453b3d9eb8e391aac64fc434eae47d82e65c21ff50750bd9`。
+官方 [0.4.0 游戏数据包](https://github.com/alfworld/alfworld/releases/download/0.4.0/json_2.1.2_tw-pddl.zip)
+内嵌域也受支持，哈希为
+`203aa16c485c986a2bf46446f747216e330132e7d822e797eee9ee8218d89e88`。
+它与仓库域的唯一 AST 差异是 clean 前置条件还接受 `SinkType`，编译时保留
+各自的真实条件，不改写数据或放宽未知域校验。manifest 记录两种允许的哈希，
+逐轨迹来源记录实际加载的域哈希。
 部署还核验 TextWorld 两个原生 Python 模块的 Git blob 哈希；版本号相同而
 源码不同也会停止。manifest 记录源锁，逐轨迹 schema 记录 problem 哈希。
 

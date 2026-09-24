@@ -22,6 +22,10 @@ SCHEMA = "exact.alfworld.pddl.predicates.v1"
 DOMAIN_PATH = Path(__file__).resolve().parents[2] / "agent_system/environments/env_package/alfworld/alfworld/data/alfred.pddl"
 PROTECTABLE = frozenset({"isclean", "ishot", "iscool", "istoggled", "inreceptacle"})
 SUPPORTED_DOMAIN_HASH = "decd886f9a13e537453b3d9eb8e391aac64fc434eae47d82e65c21ff50750bd9"
+# The official 0.4.0 game archive also permits cleaning at SinkType. Its only
+# AST difference from the vendored domain is that extra clean precondition.
+RELEASE_DOMAIN_HASH = "203aa16c485c986a2bf46446f747216e330132e7d822e797eee9ee8218d89e88"
+SUPPORTED_DOMAIN_HASHES = frozenset({SUPPORTED_DOMAIN_HASH, RELEASE_DOMAIN_HASH})
 
 
 def parse_pddl(source: str) -> tuple:
@@ -171,7 +175,7 @@ class GroundAction:
 class SemanticModel:
     def __init__(self, game_data: dict):
         domain = parse_pddl(game_data["pddl_domain"])
-        if content_hash(domain) != SUPPORTED_DOMAIN_HASH:
+        if content_hash(domain) not in SUPPORTED_DOMAIN_HASHES:
             raise ValueError("unsupported ALFWorld domain: sparse certificates require the audited domain")
         self.domain_hash = content_hash(domain)
         problem = parse_pddl(game_data["pddl_problem"])
