@@ -903,6 +903,12 @@ def make_envs(config):
         env_kwargs = {
             'eval_dataset': config.env.alfworld.eval_dataset, # 'eval_in_distribution' or 'eval_out_of_distribution'
             'exact_signal': config.env.alfworld.get('exact_signal', 'planner'),
+            # Plain PPO/GRPO/GiGPO never consume planner credit snapshots.
+            # Preserve predicate instrumentation for matched-protocol baselines.
+            'exact_enabled': (
+                str(config.algorithm.adv_estimator).lower().split('.')[-1] == 'exact'
+                or config.env.alfworld.get('exact_signal', 'planner') == 'predicates'
+            ),
             'commit_guard': config.env.alfworld.get('commit_guard', True),
             'max_steps': config.env.max_steps,
         }

@@ -68,6 +68,7 @@ class AlfworldWorker:
         self._exact_last_intermediate_reward = None
         self._exact_snapshot = None
         self._exact_signal = config.get("exact", {}).get("signal", "planner")
+        self._exact_enabled = config.get("exact", {}).get("enabled", True)
 
     @staticmethod
     def _single_batch_info(infos, key):
@@ -85,6 +86,8 @@ class AlfworldWorker:
         return raw_value
 
     def _refresh_exact_snapshot(self, infos, *, reset=False):
+        if not self._exact_enabled:
+            return
         from recipe.exact.env_probes import alfworld_intermediate_reward_snapshot
 
         if self._exact_signal == "predicates":
@@ -186,6 +189,7 @@ class AlfworldEnvs(gym.Env):
         if self.exact_signal not in {'planner', 'predicates'}:
             raise ValueError('unsupported ALFWorld EXACT signal')
         config['exact'] = {
+            'enabled': bool(env_kwargs.get('exact_enabled', True)),
             'signal': self.exact_signal,
             'commit_guard': bool(env_kwargs.get('commit_guard', True)),
             'horizon': int(env_kwargs.get('max_steps', 50)),

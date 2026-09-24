@@ -293,16 +293,17 @@ class AlfredTWEnv:
         wrappers = [alfred_demangler, AlfredInfos]
 
         # Register a new Gym environment.
+        exact_config = self.config.get("exact", {})
+        planner_credit = exact_config.get("enabled", True) and exact_config.get("signal", "planner") == "planner"
         request_infos = textworld.EnvInfos(
             won=True,
             lost=True,
             admissible_commands=True,
-            facts=True,
-            intermediate_reward=True,
-            policy_commands=True,
+            facts=planner_credit,
+            intermediate_reward=planner_credit,
+            policy_commands=planner_credit,
             extras=["gamefile"],
         )
-        exact_config = self.config.get("exact", {})
         if exact_config.get("signal", "planner") == "predicates":
             wrappers.append(AlfredExactInstrumentation(
                 horizon=int(exact_config["horizon"]),

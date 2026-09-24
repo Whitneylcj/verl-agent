@@ -187,3 +187,11 @@ token 稀疏性、score 方差和任务成功率实验，才能作实证结论�
 语法与 `git diff --check` 通过。完整 recipe 测试中旧 AppWorld / ALFWorld manager
 模块因本机没有 Ray / Gym 环境依赖而排除；新增谓词 manager 测试独立通过。
 仓库 `tests/test_protocol.py` 的收集也受 Ray 缺失阻挡，未宣称全仓检查通过。
+
+## 基线吞吐
+
+普通 PPO/GRPO/GiGPO 在 planner 模式下不请求未被算法使用的 credit snapshot、
+原始 facts 或 `policy_commands`，避免 TextWorld 每次环境动作后重新规划。
+环境观察、可执行动作、终局奖励和终止条件保持不变。EXACT 的 planner 模式仍
+采集原有 credit 信息；显式 predicates 模式也保留校验，以支持相同协议的基线。
+该修改只移除多余规划请求；实际 GPU 吞吐及同步环境等待仍需远端实测。
